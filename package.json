@@ -1,0 +1,32 @@
+{
+  "author": {
+    "name": "ARLOOPA",
+    "url": "https://arloopa.com"
+  },
+  "description": "Cross-platform Gaussian Splatting renderer for Unity with PlayCanvas-compatible formats",
+  "displayName": "UnitySplats",
+  "name": "com.arloopa.unitysplats",
+  "version": "1.4.0",
+  "unity": "6000.0",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/arloopa/com.arloopa.unitysplats.git"
+  },
+  "documentationUrl": "https://github.com/arloopa/com.arloopa.unitysplats#readme",
+  "changelogUrl": "https://github.com/arloopa/com.arloopa.unitysplats/blob/main/CHANGELOG.md",
+  "licensesUrl": "https://github.com/arloopa/com.arloopa.unitysplats/blob/main/LICENSE.md",
+  "keywords": [
+    "gaussian-splatting",
+    "3dgs",
+    "splat",
+    "playcanvas",
+    "urp",
+    "hdrp",
+    "xr"
+  ],
+  "dependencies": {
+    "com.netpyoung.webp": "0.3.22",
+    "com.unity.mathematics": "1.3.2"
+  }
+}
