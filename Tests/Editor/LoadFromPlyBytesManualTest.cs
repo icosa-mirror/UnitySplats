@@ -9,7 +9,7 @@ using Unity.Mathematics;
 using UnityEditor;
 using UnityEngine;
 
-namespace Gsplat.Editor
+namespace Gsplat.Tests
 {
     static class LoadFromPlyBytesManualTest
     {

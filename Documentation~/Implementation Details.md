@@ -11,8 +11,6 @@ PLY, SOG, SPZ, and Gaussian-splat GLB readers produce a common `GsplatDecodedDat
 
 SPZ v1-v4 decompression is implemented by `SpzLoader`; v4 uses the bundled Zstandard decoder. SOG images are decoded from WebP before their attributes are converted into the common representation.
 
-The PlayCanvas `lod-meta.json` parser and streaming types remain in the source, but their importer and public documentation are temporarily disabled.
-
 ## Shared resources and lifetime
 
 `GsplatSettings` owns the package-wide materials, compute shaders, render-order limits, and procedurally generated instance mesh. The instance mesh contains batches of quads; the vertex z value encodes the intra-instance splat index used by the vertex shader.

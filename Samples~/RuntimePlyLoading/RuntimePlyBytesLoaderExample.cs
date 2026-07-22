@@ -1,21 +1,21 @@
-// Manual test for LoadFromPlyBytes.
-// Add to a GameObject together with GsplatRenderer, set PlyPath (absolute, or relative
-// to StreamingAssets), and enter Play mode. The PLY is read with File.ReadAllBytes and
-// loaded via LoadFromPlyBytes — no importer / asset file involved — then rendered.
+// Runtime loading example for UnitySplats.
+// SPDX-License-Identifier: MIT
 
 using System.IO;
 using UnityEngine;
 
-namespace Gsplat
+namespace Gsplat.Samples
 {
     [RequireComponent(typeof(GsplatRenderer))]
-    public class RuntimePlyBytesLoaderTest : MonoBehaviour
+    public sealed class RuntimePlyBytesLoaderExample : MonoBehaviour
     {
         [Tooltip("Absolute path, or relative to StreamingAssets")]
         public string PlyPath;
 
         public CompressionMode Compression = CompressionMode.Spark;
         public SourceCoordinates SourceCoordinates = SourceCoordinates.RUB;
+
+        GsplatAsset m_runtimeAsset;
 
         void Start()
         {
@@ -31,14 +31,25 @@ namespace Gsplat
             // Simulates data arriving as a byte array (e.g. downloaded at runtime).
             var bytes = File.ReadAllBytes(path);
 
-            GsplatAsset asset = Compression == CompressionMode.Spark
+            m_runtimeAsset = Compression == CompressionMode.Spark
                 ? ScriptableObject.CreateInstance<GsplatAssetSpark>()
                 : ScriptableObject.CreateInstance<GsplatAssetUncompressed>();
-            asset.LoadFromPlyBytes(bytes, null, SourceCoordinates);
+            m_runtimeAsset.LoadFromPlyBytes(bytes, null, SourceCoordinates);
 
-            GetComponent<GsplatRenderer>().GsplatAsset = asset;
-            Debug.Log($"Loaded {asset.SplatCount} splats (SH bands {asset.SHBands}) " +
+            GetComponent<GsplatRenderer>().GsplatAsset = m_runtimeAsset;
+            Debug.Log($"Loaded {m_runtimeAsset.SplatCount} splats (SH bands {m_runtimeAsset.SHBands}) " +
                       $"from {bytes.Length} bytes via LoadFromPlyBytes");
+        }
+
+        void OnDestroy()
+        {
+            if (!m_runtimeAsset)
+                return;
+
+            var renderer = GetComponent<GsplatRenderer>();
+            if (renderer && renderer.GsplatAsset == m_runtimeAsset)
+                renderer.GsplatAsset = null;
+            Destroy(m_runtimeAsset);
         }
     }
 }

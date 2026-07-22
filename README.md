@@ -1,5 +1,9 @@
 # UnitySplats
 
+[![Version](https://img.shields.io/badge/version-v1.0.0-blue.svg)](./CHANGELOG.md)
+[![Unity](https://img.shields.io/badge/Unity-6000.0%2B-black.svg)](https://unity.com/)
+[![License](https://img.shields.io/badge/license-MIT-green.svg)](./LICENSE.md)
+
 UnitySplats is a cross-platform Unity 6 package for importing, loading, and rendering [3D Gaussian Splatting](https://repo-sam.inria.fr/fungraph/3d-gaussian-splatting/) (3DGS) content. It supports the Built-in Render Pipeline, URP, and HDRP, with GPU and portable CPU sorting paths selected at runtime.
 
 ![Gaussian splat rendered in Unity](Documentation~/Images/splat.png)
@@ -18,7 +22,6 @@ UnitySplats is a Unity implementation maintained by ARLOOPA. It is not an offici
 - Bundled and unpacked PlayCanvas SOG v1/v2 support.
 - SPZ v1-v4 support, including Zstandard-compressed SPZ v4 attributes.
 - Gaussian-splat GLB support using `KHR_gaussian_splatting`.
-<!-- PlayCanvas lod-meta.json streaming is temporarily disabled. -->
 - Runtime loading from file paths, byte arrays, and streams.
 - Spark-packed and uncompressed Unity asset representations.
 - Asynchronous GPU upload with optional rendering during upload.
@@ -53,7 +56,7 @@ UnitySplats chooses the fastest compatible sorting and rendering path at runtime
 
 The OpenGL ES path uses RGBA8 byte-packed and floating-point sampled textures instead of vertex-stage storage buffers. This avoids driver failures seen when some mobile GPUs report SSBO support but reject Unity's generated `BufferBlock` bindings. OpenGL ES 3.1 is the minimum supported Android OpenGL version.
 
-Maintainer testing has covered multiple Android and Apple devices using OpenGL ES, Vulkan, and Metal, including Samsung and HONOR Android hardware used to validate the GLES compatibility path. Device drivers still vary, so a listed API is a supported target rather than a guarantee for every GPU/OS combination. Hardware reports are welcome through GitHub Issues.
+Maintainer testing has covered multiple Android and Apple devices using OpenGL ES, Vulkan, and Metal, including Samsung and HONOR Android hardware and Meta Quest 3 and Meta Quest 3S headsets. Samsung and HONOR devices were also used to validate the GLES compatibility path. Device drivers still vary, so a listed API is a supported target rather than a guarantee for every GPU/OS combination. Hardware reports are welcome through GitHub Issues.
 
 The WebGL 2 path does not create compute or structured graphics buffers. It stores splat data and draw order in sampled textures and runs the counting sort on Unity's main thread. Use Spark compression and moderate splat counts for Web builds: browser memory limits and synchronous sorting make large uncompressed assets substantially more expensive than on native platforms. Global merge and compute cutouts are unavailable on WebGL.
 
@@ -87,10 +90,10 @@ Unity Package Manager cannot resolve one Git package as a transitive dependency 
 4. Repeat the process for UnitySplats:
 
    ```text
-   https://github.com/arloopa/com.arloopa.unitysplats.git#v1.4.0
+   https://github.com/arloopa/UnitySplats.git
    ```
 
-Remove the version suffix to follow the repository's default branch, although tagged versions are recommended for reproducible projects.
+This installs the repository's current default branch.
 
 ### Install from `manifest.json`
 
@@ -100,7 +103,7 @@ Add both direct dependencies to the target project's `Packages/manifest.json`:
 {
   "dependencies": {
     "com.netpyoung.webp": "https://github.com/netpyoung/unity.webp.git?path=unity_project/Assets/unity.webp#0.3.22",
-    "com.arloopa.unitysplats": "https://github.com/arloopa/com.arloopa.unitysplats.git#v1.4.0"
+    "com.arloopa.unitysplats": "https://github.com/arloopa/UnitySplats.git"
   }
 }
 ```
@@ -109,12 +112,9 @@ Keep the project's other dependencies in the same object.
 
 ### Install from a release archive
 
-Download the UnitySplats release ZIP, extract it outside the target project's `Assets` folder, then use `Window > Package Manager > + > Install package from disk...`:
+Download the UnitySplats release ZIP and extract it outside the target project's `Assets` folder. Install Unity.WebP first using its Git URL above or a separately downloaded Unity.WebP package. Then open `Window > Package Manager`, choose `+ > Install package from disk...`, and select the UnitySplats `package.json`.
 
-1. Select `com.netpyoung.webp/package.json` from the release bundle.
-2. Select `com.arloopa.unitysplats/package.json`.
-
-The WebP package must be installed first. The release bundle includes it because Unity does not support Git dependencies between packages.
+The UnitySplats source archive does not bundle Unity.WebP. Unity requires Git dependencies to be declared directly in the consuming project's `Packages/manifest.json`, which is why Unity.WebP must be installed separately.
 
 ## Render-pipeline setup
 
@@ -134,13 +134,11 @@ For maximum performance, prefer Vulkan on Android and Vulkan or Direct3D 12 on W
 
 You can also create a GameObject manually, add a `Gsplat Renderer` component, and assign the imported asset to its `Gsplat Asset` field.
 
-Most 3DGS content is trained in gamma space. For the most accurate blending, use a matching project/content color workflow. `Gamma To Linear` is available as a compatibility workaround, but conversion before alpha blending can reduce visual accuracy.
+Most 3DGS content is trained in gamma space. `Gamma To Linear` is enabled by default on `GsplatRenderer`; disable it when the source colors are already authored for the project's linear workflow. Conversion before alpha blending can otherwise reduce visual accuracy.
 
 ### Unpacked SOG
 
 Select the SOG `meta.json`, then choose `Assets > UnitySplats > Import unpacked SOG (Spark)`. Keep all referenced files beside the metadata.
-
-<!-- PlayCanvas lod-meta.json streaming documentation is temporarily disabled. -->
 
 ## Runtime loading
 
@@ -162,6 +160,8 @@ Destroy(asset);
 ```
 
 `LoadFile` accepts filesystem paths. Android APK `StreamingAssets`, HTTP(S), and other URI-based sources should be read with `UnityWebRequest`, then passed to `GsplatRuntimeLoader.Load(byte[], ...)`. Use `Load(Stream, ...)` or `LoadUnpackedSog(...)` for other input forms.
+
+The Package Manager includes an optional **Runtime PLY Loading** sample that demonstrates byte-array loading and runtime asset cleanup.
 
 ## Active source ranges
 
@@ -188,8 +188,6 @@ These methods update Unity GPU buffers and must run on the main thread. Compute 
 - SOG v1/v2 uses Unity.WebP and its platform libwebp binaries.
 - SPZ files containing `SPZ_ADOBE_coordinate_system` use that descriptor automatically.
 - GLB primitives must declare `KHR_gaussian_splatting` and the required accessors. UnitySplats also recognizes the legacy logarithmic scale encoding written by `splat-transform` 2.6.0 and older. Scene graphs that instance splat meshes with several node transforms are not flattened into one asset.
-<!-- lod-meta.json format notes are temporarily disabled. -->
-
 ## XR support
 
 | XR render mode | Built-in | URP | HDRP |
@@ -200,7 +198,6 @@ These methods update Unity GPU buffers and must run on the main thread. Compute 
 ## Documentation
 
 - [Implementation Details](./Documentation~/Implementation%20Details.md)
-<!-- PlayCanvas LOD Streaming documentation is temporarily disabled. -->
 - [Changelog](./CHANGELOG.md)
 - [Third Party Notices](./Third%20Party%20Notices.md)
 
