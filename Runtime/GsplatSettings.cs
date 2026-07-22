@@ -41,21 +41,32 @@ namespace Gsplat
                 }
                 else
                 {
-                    if (settings.Version < new Version("1.2.0"))
+                    Version previousVersion = settings.Version;
+                    bool changed = false;
+                    if (previousVersion < new Version("1.2.0"))
                     {
-                        Debug.Log($"Updated GsplatSettings from version {settings.Version}.");
                         settings.Materials = DefaultMaterials;
                         settings.GlobalMaterial = DefaultGlobalMaterial;
                         settings.m_prevComputeShader = null;
-                        settings.Version = GsplatUtils.k_SettingsVersion;
-                        settings.OnValidate();
-                        EditorUtility.SetDirty(settings);
-                        AssetDatabase.SaveAssets();
+                        changed = true;
                     }
-                    else if (settings.Version < new Version("1.4.0"))
+                    else if (previousVersion < new Version("1.4.0"))
                     {
-                        Debug.Log($"Updated GsplatSettings from version {settings.Version}.");
                         settings.GlobalMaterial = DefaultGlobalMaterial;
+                        changed = true;
+                    }
+
+                    if (previousVersion < new Version("1.5.0"))
+                    {
+                        // Cross-renderer sorting used to be an obscure opt-in project setting.
+                        // Enable it once on upgrade; subsequent user changes are preserved.
+                        settings.EnableGlobalSort = true;
+                        changed = true;
+                    }
+
+                    if (changed)
+                    {
+                        Debug.Log($"Updated GsplatSettings from version {previousVersion}.");
                         settings.Version = GsplatUtils.k_SettingsVersion;
                         settings.OnValidate();
                         EditorUtility.SetDirty(settings);
@@ -74,7 +85,7 @@ namespace Gsplat
 
         [Tooltip(
             "When enabled, 2+ active Gaussian splat renderers are merged into a single globally depth-sorted draw call.")]
-        public bool EnableGlobalSort;
+        public bool EnableGlobalSort = true;
 
         public uint SplatInstanceSize;
         public uint UploadBatchSize;
@@ -106,7 +117,7 @@ namespace Gsplat
         ComputeShader m_prevComputeShader;
         uint m_prevSplatInstanceSize;
 
-        [HideInInspector] [SerializeField] string m_version = "1.4.0";
+        [HideInInspector] [SerializeField] string m_version = "1.5.0";
 
 #if UNITY_EDITOR
         static ComputeShader DefaultComputeShader => AssetDatabase.LoadAssetAtPath<ComputeShader>(
@@ -136,6 +147,7 @@ namespace Gsplat
             ComputeShader = DefaultComputeShader;
             GlobalMaterial = DefaultGlobalMaterial;
             Materials = DefaultMaterials;
+            EnableGlobalSort = true;
             SplatInstanceSize = 128;
             UploadBatchSize = 100000;
             MaxRenderOrder = 1;

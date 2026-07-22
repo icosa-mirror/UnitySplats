@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-07-22
+
+### Added
+
+- Added Scene-view selection of `GsplatRenderer` GameObjects through transformed splat bounds without requiring a collider.
+- Added multi-object editing to the renderer inspector, including mixed values and batch `BoxCollider` fitting.
+- Added cross-renderer sorting controls and compatibility guidance to `Project Settings > Gsplat`.
+- Added hover tooltips for every editable `GsplatRenderer` inspector control.
+
+### Changed
+
+- Enabled cross-renderer per-splat sorting by default for compatible Spark renderers; existing project settings migrate once while preserving subsequent manual changes.
+
 ## [1.0.1] - 2026-07-22
 
 ### Fixed
@@ -56,6 +69,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Fixed URP compilation on Unity 6000.4 and newer, where the legacy `ScriptableRenderPass.Execute` override was removed in favor of RenderGraph.
 - Fixed Project-to-Hierarchy drag-and-drop on Unity 6000.4 and newer by using the 64-bit `EntityId` handler instead of the obsolete 32-bit `InstanceID` delegate.
 
-[unreleased]: https://github.com/arloopa/UnitySplats/compare/v1.0.1...HEAD
+[unreleased]: https://github.com/arloopa/UnitySplats/compare/v1.1.0...HEAD
+[1.1.0]: https://github.com/arloopa/UnitySplats/compare/v1.0.1...v1.1.0
 [1.0.1]: https://github.com/arloopa/UnitySplats/compare/v1.0.0...v1.0.1
 [1.0.0]: https://github.com/arloopa/UnitySplats/releases/tag/v1.0.0

@@ -23,6 +23,7 @@ namespace Gsplat.Editor
 
         public override void OnGUI(string searchContext)
         {
+            m_gsplatSettings.Update();
             EditorGUILayout.PropertyField(m_gsplatSettings.FindProperty(nameof(GsplatSettings.ComputeShader)));
             EditorGUILayout.PropertyField(m_gsplatSettings.FindProperty(nameof(GsplatSettings.SplatInstanceSize)));
             EditorGUILayout.PropertyField(m_gsplatSettings.FindProperty(nameof(GsplatSettings.UploadBatchSize)));
@@ -36,16 +37,26 @@ namespace Gsplat.Editor
             EditorGUILayout.PropertyField(m_gsplatSettings.FindProperty(nameof(GsplatSettings.Materials)));
 
             EditorGUILayout.Space();
-            EditorGUILayout.LabelField("Global Sort", EditorStyles.boldLabel);
+            EditorGUILayout.LabelField("Cross-Renderer Sorting", EditorStyles.boldLabel);
             var enableGlobalSortProp = m_gsplatSettings.FindProperty(nameof(GsplatSettings.EnableGlobalSort));
-            EditorGUILayout.PropertyField(enableGlobalSortProp);
+            EditorGUILayout.PropertyField(enableGlobalSortProp,
+                new GUIContent("Enable Cross-Renderer Sorting"));
             if (enableGlobalSortProp.boolValue)
             {
                 EditorGUILayout.HelpBox(
-                    "Global sort requires every active renderer to use Spark compression. " +
+                    "Cross-renderer sorting requires the GPU radix path and every active renderer " +
+                    "to use Spark compression. " +
                     "If any active renderer uses an uncompressed asset, global sort is disabled " +
                     "for the whole scene and all renderers fall back to per-renderer rendering.",
                     MessageType.Info);
+                if (!GsplatSorter.Instance.GpuSortEnabled)
+                {
+                    EditorGUILayout.HelpBox(
+                        "The current graphics API is using the portable CPU sorter. True " +
+                        "cross-renderer merging is unavailable on this path. Prefer Vulkan, " +
+                        "Direct3D 12, or Metal on supported hardware.",
+                        MessageType.Warning);
+                }
                 EditorGUILayout.PropertyField(m_gsplatSettings.FindProperty(nameof(GsplatSettings.GlobalMaterial)));
             }
 
@@ -55,7 +66,8 @@ namespace Gsplat.Editor
             if (GUILayout.Button("Reset", GUILayout.Width(60)))
                 ResetToDefaults();
             GUILayout.EndHorizontal();
-            m_gsplatSettings.ApplyModifiedProperties();
+            if (m_gsplatSettings.ApplyModifiedProperties())
+                GsplatSorter.Instance.MarkGlobalBuffersDirty();
         }
 
         void ResetToDefaults()

@@ -36,7 +36,7 @@ Compatible Direct3D 12, Vulkan, and Metal devices use the compute path:
 
 Wave/subgroup operations and compatible compute workgroup limits are required. The renderer automatically falls back when those requirements are unavailable.
 
-When global sorting is enabled and every active renderer satisfies the merge constraints, `GsplatGlobalRenderer` packs renderer and source IDs into one global order, sorts them together, and draws the merged result. Incompatible compression, layer, queue, or packed-index conditions return the scene to per-renderer drawing.
+Cross-renderer sorting is enabled by default. When every active renderer satisfies the merge constraints, `GsplatGlobalRenderer` packs renderer and source IDs into one global order, sorts them together, and draws the merged result. The setting is available in `Project Settings > Gsplat` and remains project-wide so the renderer set cannot enter a partially merged state. Incompatible compression, layer, queue, or packed-index conditions return the scene to per-renderer drawing.
 
 ### CPU fallback
 
@@ -71,6 +71,8 @@ The fragment shader evaluates the Gaussian exponential falloff, discards pixels 
 
 ## Bounds and editor integration
 
-Every imported `GsplatAsset` stores local-space bounds. `GsplatRenderer.FitBoxColliderToAssetBounds` copies the stored center and size to a `BoxCollider` on the same GameObject. The custom renderer inspector detects a newly added default `BoxCollider`, fits it automatically, and provides a manual **Fit Box Collider to Splat Bounds** button. `OnValidate` keeps the collider aligned when the assigned asset changes or is reimported. GameObject rotation and scale continue to be handled by Unity's transform and collider systems.
+Every imported `GsplatAsset` stores local-space bounds. `GsplatScenePicker` renders those transformed bounds into Unity's editor-only GPU picking buffer and retains a ray/bounds fallback for classic `PickGameObject` calls. This allows an otherwise geometry-less splat GameObject to be selected without a collider while preserving Unity's filtering, depth testing, cycling, and multi-selection behavior.
+
+`GsplatRenderer.FitBoxColliderToAssetBounds` copies the stored center and size to a `BoxCollider` on the same GameObject. The custom renderer inspector detects newly added default `BoxCollider` components, fits them automatically, and provides a manual **Fit Box Collider to Splat Bounds** button. The editor supports mixed-value multi-object editing and applies collider fitting to every eligible selected renderer. `OnValidate` keeps colliders aligned when assigned assets change or are reimported. GameObject rotation and scale continue to be handled by Unity's transform and collider systems.
 
 Project-to-Hierarchy and Project-to-Scene drag-and-drop create a configured `GsplatRenderer`, assign the imported asset, and apply the package's 180-degree local Z rotation convention. Unity 6000.3 and newer use the V2 Hierarchy handler and resolve its 64-bit `EntityId`; Unity 6000.0-6000.2 retain the legacy `InstanceID` handler.

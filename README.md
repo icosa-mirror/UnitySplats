@@ -1,6 +1,6 @@
 # UnitySplats
 
-[![Version](https://img.shields.io/badge/version-v1.0.1-blue.svg)](./CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-v1.1.0-blue.svg)](./CHANGELOG.md)
 [![Unity](https://img.shields.io/badge/Unity-6000.0%2B-black.svg)](https://unity.com/)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](./LICENSE.md)
 
@@ -64,7 +64,7 @@ The WebGL 2 path does not create compute or structured graphics buffers. It stor
 
 The GPU radix path requires wave/subgroup operations and compatible compute workgroup limits. The CPU fallback retains instanced GPU drawing, but disables global multi-renderer merge and compute cutouts. It keeps one sort order per renderer and prioritizes a game camera, so substantially different simultaneous camera viewpoints share that order.
 
-Global merge is enabled only when all active renderers are fully uploaded, Spark-packed, use the same GameObject layer, keep the default render order, and fit the packed renderer/index limits. Other configurations fall back to separate draw calls.
+Cross-renderer sorting is enabled by default. It globally depth-orders splats from overlapping renderers and draws them as one merged scene when all active renderers are fully uploaded, Spark-packed, use the same GameObject layer, keep the default render order, and fit the packed renderer/index limits. Configure it from `Project Settings > Gsplat`. Other configurations fall back to separate draw calls.
 
 ## Requirements
 
@@ -156,6 +156,10 @@ For maximum performance, prefer Vulkan on Android and Vulkan or Direct3D 12 on W
 3. Drag the imported asset from the Project window into the Hierarchy or Scene view. UnitySplats automatically creates a GameObject with `GsplatRenderer`, assigns the asset, and sets its local Z rotation to 180 degrees.
 
 You can also create a GameObject manually, add a `Gsplat Renderer` component, and assign the imported asset to its `Gsplat Asset` field.
+
+In the Scene view, click anywhere inside a splat's transformed asset bounds to select its GameObject; a collider is not required. Unity's normal Shift/Ctrl selection modifiers continue to work. Selecting several `GsplatRenderer` GameObjects enables multi-object editing for their shared inspector properties and can fit all attached `BoxCollider` components in one action.
+
+When two or more Spark renderers overlap, leave **Enable Cross-Renderer Sorting** enabled in `Project Settings > Gsplat`. On supported Vulkan, Direct3D 12, and Metal devices this creates one shared per-splat depth order, preventing whole captures from switching in front of one another as the camera moves. The portable CPU sorter used by OpenGL, WebGL, Direct3D 11, and unsupported GPU configurations retains separate draw calls and cannot provide the true merged order.
 
 Most 3DGS content is trained in gamma space. `Gamma To Linear` is enabled by default on `GsplatRenderer`; disable it when the source colors are already authored for the project's linear workflow. Conversion before alpha blending can otherwise reduce visual accuracy.
 

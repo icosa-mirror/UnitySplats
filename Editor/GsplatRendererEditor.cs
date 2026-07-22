@@ -1,31 +1,24 @@
-﻿// Copyright (c) 2025 Yize Wu
+// Copyright (c) 2025 Yize Wu
+// Copyright (c) 2026 ARLOOPA
 // SPDX-License-Identifier: MIT
 
+using System.Linq;
 using UnityEditor;
 using UnityEngine;
 
 namespace Gsplat.Editor
 {
     [CustomEditor(typeof(GsplatRenderer))]
+    [CanEditMultipleObjects]
     public class GsplatRendererEditor : UnityEditor.Editor
     {
+        GsplatRenderer[] RendererTargets => targets.Cast<GsplatRenderer>().ToArray();
+
         public override void OnInspectorGUI()
         {
-            FitNewBoxColliderToAssetBounds();
+            var rendererTargets = RendererTargets;
+            FitNewBoxCollidersToAssetBounds(rendererTargets);
             serializedObject.Update();
-
-            var rendererTargetEarly = (GsplatRenderer)target;
-            if (GsplatSettings.Instance.EnableGlobalSort
-                && rendererTargetEarly.GsplatAsset
-                && rendererTargetEarly.GsplatAsset.Compression == CompressionMode.Uncompressed)
-            {
-                EditorGUILayout.HelpBox(
-                    "Global sort is enabled, but this renderer uses an uncompressed asset. " +
-                    "Global sort is all-or-nothing: if any active renderer is uncompressed, the " +
-                    "whole scene falls back to per-renderer rendering. Re-import with Spark " +
-                    "compression to enable cross-renderer depth ordering.",
-                    MessageType.Warning);
-            }
 
             DrawPropertiesExcluding(serializedObject, "m_Script",
                 nameof(GsplatRenderer.SHDegree),
@@ -35,105 +28,153 @@ namespace Gsplat.Editor
                 nameof(GsplatRenderer.SortMode)
             );
 
-            // SH degree: slider max equals the bound asset's SHBands (so a degree-3 asset
-            // shows 0–3, a degree-4 SPZ shows 0–4). Without an asset, fall back to 3.
-            var rendererTarget = (GsplatRenderer)target;
-            int maxShBands = rendererTarget.GsplatAsset ? rendererTarget.GsplatAsset.SHBands : 3;
-            var shDegreeProp = serializedObject.FindProperty(nameof(GsplatRenderer.SHDegree));
-            shDegreeProp.intValue = EditorGUILayout.IntSlider(
-                "SH Degree", shDegreeProp.intValue, 0, maxShBands);
+            DrawShDegree(rendererTargets);
+            DrawBrightness();
+            DrawSortingControls(rendererTargets);
+            DrawUploadControls();
+            DrawColliderControls(rendererTargets);
 
-            var brightnessProp = serializedObject.FindProperty(nameof(GsplatRenderer.Brightness));
-            float brightness = brightnessProp.floatValue;
-
-            // Use log scale for the slider UX
-            // range from -3 (~5%) to 3 (~20x)
-            float logVal = UnityEngine.Mathf.Log(
-                UnityEngine.Mathf.Max(0.001f, brightness)
-            );
-            logVal = EditorGUILayout.Slider("Log Brightness", logVal, -4.0f, 3.0f);
-            brightness = EditorGUILayout.FloatField(
-                "Brightness", UnityEngine.Mathf.Exp(logVal)
-            );
-            brightnessProp.floatValue = brightness;
-            
-            EditorGUILayout.PropertyField(serializedObject.FindProperty(nameof(GsplatRenderer.SortMode)));
-            var renderer = (GsplatRenderer)target;
-            // Sort Refresh Rate slider only if on correct mode
-            if (renderer.SortMode == GsplatRenderer.GsplatSortMode.SortEveryNFrames ||
-                renderer.SortMode == GsplatRenderer.GsplatSortMode.CutoutsEveryNSorts)
+            if (serializedObject.ApplyModifiedProperties())
             {
-                var newSortRefreshRate = (uint)EditorGUILayout.IntSlider(new GUIContent("Sort Refresh Rate"),
-                    (int)renderer.SortRefreshRate, 1, 60);
-                if (newSortRefreshRate != renderer.SortRefreshRate)
-                {
-                    renderer.SortRefreshRate = newSortRefreshRate;
+                foreach (var renderer in rendererTargets)
                     renderer.ForceRefresh();
-                }
             }
-
-            // Cutouts Refresh Rate slider only if on correct mode
-            if (renderer.SortMode == GsplatRenderer.GsplatSortMode.CutoutsEveryNSorts)
-            {
-                var newCutoutsRefreshRate = (uint)EditorGUILayout.IntSlider(new GUIContent("Cutouts Refresh Rate"),
-                    (int)renderer.CutoutsRefreshRate, 1, 60);
-                if (newCutoutsRefreshRate != renderer.CutoutsRefreshRate)
-                {
-                    renderer.CutoutsRefreshRate = newCutoutsRefreshRate;
-                    renderer.ForceRefresh();
-                }
-            }
-            
-            var renderOrderProp = serializedObject.FindProperty(nameof(GsplatRenderer.RenderOrder));
-            uint renderOrder = (uint)renderOrderProp.intValue;
-
-            // RenderOrder slider depend on the MaxRenderOrder setting
-            if (GsplatSettings.Instance.MaxRenderOrder > 1)
-                renderOrderProp.intValue = EditorGUILayout.IntSlider(new GUIContent("Render Order"),
-                    (int)renderOrder, 0, (int)GsplatSettings.Instance.MaxRenderOrder - 1);
-
-            EditorGUILayout.PropertyField(serializedObject.FindProperty(nameof(GsplatRenderer.AsyncUpload)));
-            if (serializedObject.FindProperty(nameof(GsplatRenderer.AsyncUpload)).boolValue)
-            {
-                EditorGUI.indentLevel++;
-                EditorGUILayout.PropertyField(
-                    serializedObject.FindProperty(nameof(GsplatRenderer.RenderBeforeUploadComplete)));
-                EditorGUI.indentLevel--;
-            }
-
-            if (((GsplatRenderer)target).TryGetComponent<BoxCollider>(out _))
-            {
-                if (GUILayout.Button("Fit Box Collider to Splat Bounds"))
-                {
-                    var boxCollider = rendererTarget.GetComponent<BoxCollider>();
-                    Undo.RecordObject(boxCollider, "Fit Box Collider to Splat Bounds");
-                    rendererTarget.FitBoxColliderToAssetBounds();
-                    EditorUtility.SetDirty(boxCollider);
-                }
-            }
-
-            serializedObject.ApplyModifiedProperties();
         }
 
-        void FitNewBoxColliderToAssetBounds()
+        void DrawShDegree(GsplatRenderer[] renderers)
         {
-            var rendererTarget = (GsplatRenderer)target;
-            if (!rendererTarget.GsplatAsset ||
-                !rendererTarget.TryGetComponent(out BoxCollider boxCollider))
+            // Use the lowest available band count so one multi-edit never assigns an unsupported
+            // degree to another selected renderer.
+            int maxShBands = renderers
+                .Where(renderer => renderer.GsplatAsset)
+                .Select(renderer => (int)renderer.GsplatAsset.SHBands)
+                .DefaultIfEmpty(3)
+                .Min();
+            var property = serializedObject.FindProperty(nameof(GsplatRenderer.SHDegree));
+
+            EditorGUI.showMixedValue = property.hasMultipleDifferentValues;
+            EditorGUI.BeginChangeCheck();
+            int value = EditorGUILayout.IntSlider(
+                new GUIContent("SH Degree",
+                    "Spherical-harmonic degree used for view-dependent color. Higher values preserve more directional color detail but cost more to render."),
+                Mathf.Clamp(property.intValue, 0, maxShBands), 0, maxShBands);
+            if (EditorGUI.EndChangeCheck())
+                property.intValue = value;
+            EditorGUI.showMixedValue = false;
+        }
+
+        void DrawBrightness()
+        {
+            var property = serializedObject.FindProperty(nameof(GsplatRenderer.Brightness));
+            EditorGUI.showMixedValue = property.hasMultipleDifferentValues;
+            EditorGUI.BeginChangeCheck();
+            float brightness = EditorGUILayout.Slider(
+                new GUIContent("Brightness", "Splat color intensity multiplier."),
+                Mathf.Clamp(property.floatValue, 0f, 20f), 0f, 20f);
+            if (EditorGUI.EndChangeCheck())
+                property.floatValue = brightness;
+            EditorGUI.showMixedValue = false;
+        }
+
+        void DrawSortingControls(GsplatRenderer[] renderers)
+        {
+            var sortMode = serializedObject.FindProperty(nameof(GsplatRenderer.SortMode));
+            EditorGUILayout.PropertyField(sortMode);
+
+            bool mixedMode = sortMode.hasMultipleDifferentValues;
+            var selectedModes = renderers.Select(renderer => renderer.SortMode).ToArray();
+            bool drawSortRate = mixedMode || selectedModes.Any(mode =>
+                mode is GsplatRenderer.GsplatSortMode.SortEveryNFrames or
+                    GsplatRenderer.GsplatSortMode.CutoutsEveryNSorts);
+            bool drawCutoutRate = mixedMode || selectedModes.Any(mode =>
+                mode == GsplatRenderer.GsplatSortMode.CutoutsEveryNSorts);
+
+            if (drawSortRate)
+                DrawUIntSlider(serializedObject.FindProperty(nameof(GsplatRenderer.SortRefreshRate)),
+                    "Sort Refresh Rate",
+                    "Number of frames between depth sorts. Larger values reduce sorting cost but can make ordering react more slowly to camera movement.",
+                    1, 60);
+            if (drawCutoutRate)
+                DrawUIntSlider(serializedObject.FindProperty(nameof(GsplatRenderer.CutoutsRefreshRate)),
+                    "Cutouts Refresh Rate",
+                    "Number of completed depth sorts between compute-cutout refreshes. Larger values reduce cutout cost but update moving cutouts less often.",
+                    1, 60);
+
+            if (GsplatSettings.Instance.MaxRenderOrder > 1)
+                DrawUIntSlider(serializedObject.FindProperty(nameof(GsplatRenderer.RenderOrder)),
+                    "Render Order",
+                    "Transparent render-order offset for separately drawn splats. Keep this at 0 for cross-renderer sorting.",
+                    0, (int)GsplatSettings.Instance.MaxRenderOrder - 1);
+        }
+
+        static void DrawUIntSlider(SerializedProperty property, string label, string tooltip, int min, int max)
+        {
+            EditorGUI.showMixedValue = property.hasMultipleDifferentValues;
+            EditorGUI.BeginChangeCheck();
+            int value = EditorGUILayout.IntSlider(new GUIContent(label, tooltip),
+                Mathf.Clamp(property.intValue, min, max), min, max);
+            if (EditorGUI.EndChangeCheck())
+                property.intValue = value;
+            EditorGUI.showMixedValue = false;
+        }
+
+        void DrawUploadControls()
+        {
+            var asyncUpload = serializedObject.FindProperty(nameof(GsplatRenderer.AsyncUpload));
+            EditorGUILayout.PropertyField(asyncUpload);
+            if (!asyncUpload.hasMultipleDifferentValues && !asyncUpload.boolValue)
                 return;
 
-            // A newly added BoxCollider has Unity's default local bounds. Fit only that state
-            // during inspector redraws so intentional collider edits are not continually lost.
-            if (boxCollider.center != Vector3.zero || boxCollider.size != Vector3.one)
+            EditorGUI.indentLevel++;
+            EditorGUILayout.PropertyField(
+                serializedObject.FindProperty(nameof(GsplatRenderer.RenderBeforeUploadComplete)));
+            EditorGUI.indentLevel--;
+        }
+
+        static void DrawColliderControls(GsplatRenderer[] renderers)
+        {
+            var eligible = renderers
+                .Where(renderer => renderer.GsplatAsset && renderer.TryGetComponent<BoxCollider>(out _))
+                .ToArray();
+            if (eligible.Length == 0)
                 return;
 
-            Bounds assetBounds = rendererTarget.GsplatAsset.Bounds;
-            if (assetBounds.center == boxCollider.center && assetBounds.size == boxCollider.size)
+            string label = eligible.Length == 1
+                ? "Fit Box Collider to Splat Bounds"
+                : $"Fit {eligible.Length} Box Colliders to Splat Bounds";
+            if (!GUILayout.Button(new GUIContent(label,
+                    "Copies each selected splat asset's local bounding box into the BoxCollider on the same GameObject.")))
                 return;
 
-            Undo.RecordObject(boxCollider, "Fit Box Collider to Splat Bounds");
-            rendererTarget.FitBoxColliderToAssetBounds();
-            EditorUtility.SetDirty(boxCollider);
+            var colliders = eligible.Select(renderer => renderer.GetComponent<BoxCollider>()).ToArray();
+            Undo.RecordObjects(colliders, "Fit Box Colliders to Splat Bounds");
+            foreach (var renderer in eligible)
+            {
+                renderer.FitBoxColliderToAssetBounds();
+                EditorUtility.SetDirty(renderer.GetComponent<BoxCollider>());
+            }
+        }
+
+        static void FitNewBoxCollidersToAssetBounds(GsplatRenderer[] renderers)
+        {
+            foreach (var renderer in renderers)
+            {
+                if (!renderer.GsplatAsset || !renderer.TryGetComponent(out BoxCollider boxCollider))
+                    continue;
+
+                // A newly added BoxCollider has Unity's default local bounds. Fit only that state
+                // during inspector redraws so intentional collider edits are not continually lost.
+                if (boxCollider.center != Vector3.zero || boxCollider.size != Vector3.one)
+                    continue;
+
+                Bounds assetBounds = renderer.GsplatAsset.Bounds;
+                if (assetBounds.center == boxCollider.center && assetBounds.size == boxCollider.size)
+                    continue;
+
+                Undo.RecordObject(boxCollider, "Fit Box Collider to Splat Bounds");
+                renderer.FitBoxColliderToAssetBounds();
+                EditorUtility.SetDirty(boxCollider);
+            }
         }
     }
 }

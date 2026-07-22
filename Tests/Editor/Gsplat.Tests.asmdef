@@ -2,7 +2,8 @@
     "name": "Gsplat.Tests",
     "rootNamespace": "Gsplat.Tests",
     "references": [
-        "Gsplat"
+        "Gsplat",
+        "Gsplat.Editor"
     ],
     "includePlatforms": [
         "Editor"

@@ -22,24 +22,41 @@ namespace Gsplat
             CutoutsEveryNSorts,
         }
 
+        [Tooltip("The imported or runtime-created Gaussian splat asset rendered by this component.")]
         public GsplatAsset GsplatAsset;
 
         // Range is enforced by GsplatRendererEditor based on the bound asset's SHBands.
+        [Tooltip(
+            "Spherical-harmonic degree used for view-dependent color. Higher values preserve more directional color detail but cost more to render. The asset determines the maximum.")]
         public int SHDegree = 3;
+
+        [Tooltip(
+            "Transparent render-order offset used when splats are drawn separately. Keep this at 0 when cross-renderer sorting is enabled.")]
         [HideInInspector] public uint RenderOrder = 0;
+
+        [Tooltip("Multiplies the rendered splat color intensity. 1 uses the source brightness.")]
         public float Brightness = 1.0f;
 
         [Tooltip(
-            "Improves rendering speed by shrinking Gaussian splats while trying to keep the impact on visual quality as small as possible.")]
+            "Shrinks projected Gaussian splats to improve rendering speed. 0 preserves their original size; higher values are faster but can create gaps or reduce visual quality.")]
         [Range(0, 1)]
         public float SplatDownscaleFactor = 0.0f;
 
+        [Tooltip(
+            "Converts source RGB values from gamma to linear space before blending. Leave enabled for most trained 3DGS content; disable when the source colors are already linear.")]
         public bool GammaToLinear = true;
         [SerializeField, HideInInspector] bool m_gammaToLinearDefaultApplied;
+
+        [Tooltip(
+            "Uploads splat data over multiple frames instead of blocking until the full asset reaches the GPU. This reduces startup stalls for large runtime assets.")]
         public bool AsyncUpload;
+
+        [Tooltip(
+            "Renders the uploaded portion while an asynchronous upload is still running. Disable to keep the renderer hidden until the complete asset is resident.")]
         public bool RenderBeforeUploadComplete = true;
 
-        [Tooltip("Does cutouts update the Gsplat world bounds? (Costly on moving cutouts)")]
+        [Tooltip(
+            "Recalculates the renderer bounds after compute cutouts so Unity can cull the surviving splats more tightly. This is costly when cutouts move frequently.")]
         public bool CutoutsUpdateBounds = true;
 
         GsplatAsset m_prevAsset;
@@ -132,8 +149,14 @@ namespace Gsplat
 
         public bool ComputeSortRequired => m_renderer.ComputeSortRequired;
         public bool ComputeCutoutsRequired => m_renderer.ComputeCutoutsRequired;
+        [Tooltip(
+            "Controls refresh frequency. Always sorts every frame; Sort Every N Frames reduces sort frequency; Cutouts Every N Sorts also reduces cutout recomputation frequency.")]
         public GsplatSortMode SortMode = GsplatSortMode.Always;
+
+        [Tooltip("Number of frames between depth sorts when the selected Sort Mode uses a refresh interval.")]
         [HideInInspector] public uint SortRefreshRate = 1;
+
+        [Tooltip("Number of completed depth sorts between compute-cutout refreshes.")]
         [HideInInspector] public uint CutoutsRefreshRate = 1;
 
         public void ComputeDepth(CommandBuffer cmd, Matrix4x4 matrixMv) => m_renderer.ComputeDepth(cmd, matrixMv);
