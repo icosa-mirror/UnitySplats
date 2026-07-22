@@ -1,12 +1,8 @@
 # UnitySplats
 
-[![Version](https://img.shields.io/badge/version-v1.4.0-blue.svg)](./CHANGELOG.md)
-[![Unity](https://img.shields.io/badge/Unity-6000.0%2B-black.svg)](https://unity.com/)
-[![License](https://img.shields.io/badge/license-MIT-green.svg)](./LICENSE.md)
-
 UnitySplats is a cross-platform Unity 6 package for importing, loading, and rendering [3D Gaussian Splatting](https://repo-sam.inria.fr/fungraph/3d-gaussian-splatting/) (3DGS) content. It supports the Built-in Render Pipeline, URP, and HDRP, with GPU and portable CPU sorting paths selected at runtime.
 
-![Gaussian splat rendered in Unity](Documentation~/Images/lego.png)
+![Gaussian splat rendered in Unity](Documentation~/Images/splat.png)
 
 ## Project lineage and attribution
 
@@ -37,7 +33,7 @@ UnitySplats is a Unity implementation maintained by ARLOOPA. It is not an offici
 | `.sog` | Yes | Yes | Bundled SOG v1/v2 |
 | unpacked SOG `meta.json` | Yes | Yes | Requires the complete SOG directory |
 | `.spz` | Yes | Yes | SPZ v1-v4, SH degrees 0-4 |
-| `.glb` | Yes | Yes | Requires `KHR_gaussian_splatting` |
+| `.glb` | Yes | Yes | Requires `KHR_gaussian_splatting`; select the UnitySplats importer per file |
 
 The importer's `Auto` coordinate mode uses glTF's LUF frame for GLB and the common 3DGS/OpenGL RUB frame for PLY, SOG, and SPZ, converting the data to Unity RUF.
 
@@ -131,6 +127,8 @@ For maximum performance, prefer Vulkan on Android and Vulkan or Direct3D 12 on W
 ## Import and render a splat
 
 1. Copy or drag a `.ply`, `.sog`, `.spz`, or Gaussian-splat `.glb` file into the project's `Assets` folder.
+   For GLB, select the file and choose `Assets > UnitySplats > Choose GLB Importer... > UnitySplats (Gaussian Splat)`. You can also choose `GsplatImporter` from Unity's Importer dropdown in the file Inspector. UnitySplats is an optional GLB importer so it can coexist with glTFast and other packages that handle ordinary GLB models.
+   If two other installed packages both register themselves as the default GLB importer, Unity will continue to report a conflict between those packages until one is disabled or changed to an override importer; this does not prevent explicitly selecting UnitySplats for the Gaussian GLB.
 2. Select the imported `GsplatAsset`. `Spark` is the recommended packed representation; select `Uncompressed` when exact in-project values matter more than memory and upload speed.
 3. Drag the imported asset from the Project window into the Hierarchy or Scene view. UnitySplats automatically creates a GameObject with `GsplatRenderer`, assigns the asset, and sets its local Z rotation to 180 degrees.
 

@@ -19,8 +19,9 @@ namespace Gsplat
     {
         class GsplatRenderPass : ScriptableRenderPass
         {
-            // Execute is still required by Unity 6 when URP RenderGraph compatibility
-            // mode is enabled. RecordRenderGraph uses its own native command buffer.
+            // Unity 6000.0-6000.3 still expose Execute for URP compatibility mode.
+            // Unity 6000.4 / URP 17.4 removed that override point and use only the
+            // RecordRenderGraph path below.
             public CommandBuffer CommandBuffer;
 
 #if UNITY_6000_0_OR_NEWER
@@ -42,7 +43,8 @@ namespace Gsplat
             }
 #endif
 
-#pragma warning disable CS0672 // Compatibility-mode override is obsolete only in RenderGraph mode.
+#if !UNITY_6000_4_OR_NEWER
+#pragma warning disable CS0672 // Compatibility-mode override is obsolete in RenderGraph mode.
             public override void Execute(ScriptableRenderContext context, ref RenderingData renderingData)
             {
                 if (CommandBuffer == null)
@@ -51,6 +53,7 @@ namespace Gsplat
                 context.ExecuteCommandBuffer(CommandBuffer);
             }
 #pragma warning restore CS0672
+#endif
         }
 
         GsplatRenderPass m_pass;

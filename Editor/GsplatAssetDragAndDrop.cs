@@ -15,19 +15,33 @@ namespace Gsplat.Editor
 
         static GsplatAssetDragAndDrop()
         {
-            // Keep the InstanceID overloads for Unity 6000.0/6000.1 compatibility. Unity 6000.3
-            // marks them obsolete in favor of EntityId, but they remain the common Unity 6 API.
+            // Unity 6000.3 introduced EntityId-based V2 handlers. Unity 6000.4 passes the
+            // hierarchy target as a 64-bit EntityId and can no longer invoke the obsolete
+            // int-based delegate safely.
+#if UNITY_6000_3_OR_NEWER
+            DragAndDrop.AddDropHandlerV2(OnHierarchyDrop);
+            DragAndDrop.AddDropHandlerV2(OnSceneDrop);
+#else
 #pragma warning disable CS0618
             DragAndDrop.AddDropHandler(OnHierarchyDrop);
             DragAndDrop.AddDropHandler(OnSceneDrop);
 #pragma warning restore CS0618
+#endif
         }
 
+#if UNITY_6000_3_OR_NEWER
+        static DragAndDropVisualMode OnHierarchyDrop(
+            EntityId dropTargetEntityId,
+            HierarchyDropFlags dropMode,
+            Transform parentForDraggedObjects,
+            bool perform)
+#else
         static DragAndDropVisualMode OnHierarchyDrop(
             int dropTargetInstanceId,
             HierarchyDropFlags dropMode,
             Transform parentForDraggedObjects,
             bool perform)
+#endif
         {
             GsplatAsset[] assets = GetDraggedAssets();
             if (assets.Length == 0)
@@ -35,8 +49,13 @@ namespace Gsplat.Editor
 
             if (perform)
             {
+#if UNITY_6000_3_OR_NEWER
+                Transform parent = ResolveHierarchyParent(
+                    dropTargetEntityId, dropMode, parentForDraggedObjects);
+#else
                 Transform parent = ResolveHierarchyParent(
                     dropTargetInstanceId, dropMode, parentForDraggedObjects);
+#endif
                 CreateRenderers(assets, parent, parent ? parent.position : Vector3.zero, false);
             }
 
@@ -82,17 +101,28 @@ namespace Gsplat.Editor
             return assets.ToArray();
         }
 
+#if UNITY_6000_3_OR_NEWER
+        static Transform ResolveHierarchyParent(
+            EntityId dropTargetEntityId,
+            HierarchyDropFlags dropMode,
+            Transform parentForDraggedObjects)
+#else
         static Transform ResolveHierarchyParent(
             int dropTargetInstanceId,
             HierarchyDropFlags dropMode,
             Transform parentForDraggedObjects)
+#endif
         {
             if (parentForDraggedObjects)
                 return parentForDraggedObjects;
 
+#if UNITY_6000_3_OR_NEWER
+            var target = EditorUtility.EntityIdToObject(dropTargetEntityId) as GameObject;
+#else
 #pragma warning disable CS0618
             var target = EditorUtility.InstanceIDToObject(dropTargetInstanceId) as GameObject;
 #pragma warning restore CS0618
+#endif
             if (!target)
                 return null;
 

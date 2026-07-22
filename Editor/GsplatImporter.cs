@@ -9,7 +9,11 @@ using UnityEngine;
 
 namespace Gsplat.Editor
 {
-    [ScriptedImporter(2, new[] { "ply", "sog", "spz", "glb" })]
+    // GLB is deliberately an override extension. General-purpose glTF packages commonly
+    // register their own GLB importer, and Unity rejects every importer when more than one
+    // ScriptedImporter claims the same extension as its default. Users can select this
+    // importer per GLB from the Inspector or Assets > UnitySplats > Choose GLB Importer.
+    [ScriptedImporter(3, new[] { "ply", "sog", "spz" }, new[] { "glb" })]
     public class GsplatImporter : ScriptedImporter
     {
         public CompressionMode Compression = CompressionMode.Spark;

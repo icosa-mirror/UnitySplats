@@ -1,60 +1,78 @@
-## Implementation Details
+# Implementation Details
 
-### Resources Setup
+## Import and decoded data
 
-**Material & Mesh**: The `GsplatSettings` singleton owns global rendering resources. It:
+`GsplatImporter` handles supported Gaussian-splat files through Unity's `ScriptedImporter` pipeline. It is the default importer for PLY, SOG, and SPZ. GLB is registered as a per-asset importer override because general-purpose glTF packages often handle the same extension; users choose UnitySplats for a Gaussian-splat GLB from the Inspector importer dropdown or `Assets > UnitySplats > Choose GLB Importer...`. Runtime loading uses the same format readers through `GsplatRuntimeLoader`, so editor imports and runtime byte, stream, and file-path loading share decoding behavior.
 
-- Maintains a `GsplatMaterial` array indexed by `CompressionMode` (e.g. `Uncompressed`, `Spark`), where each `GsplatMaterial` contains a `DefaultMaterial`, a `CalcDepthShader`, and an `InitOrderShader`. The `GsplatMaterial` generates lazily `Materials` for each SH band (0-3) and Render Order combination (defined by `GsplatSettings.MaxRenderOrder`).
-- Procedurally generates a `Mesh` that consists of multiple quads. The number of quads is defined by `SplatInstanceSize`. Each vertex of these quads has its z-coordinate encoded with an intra-instance index, which is used in the vertex shader to fetch the splat order.
+PLY, SOG, SPZ, and Gaussian-splat GLB readers produce a common `GsplatDecodedData` representation containing positions, linear scales, rotations, opacity/color, spherical harmonics, antialiasing metadata, and local bounds. Source coordinate systems are converted to Unity RUF during decoding. The decoded data is then stored in one of two asset representations:
 
-**Gsplat Data**: This package supports importing PLY file in two modes via `GsplatAsset` implementations:
+- **Uncompressed**: `GsplatAssetUncompressed` stores positions, colors, scales, rotations, and optional spherical harmonics in separate managed arrays.
+- **Spark**: `GsplatAssetSpark` stores each base splat in a packed 16-byte `uint4`, with separate packed arrays for spherical-harmonic bands. Positions use float16, scale is logarithmically encoded, color/opacity use RGBA8, and rotation uses octahedral axis-angle encoding.
 
-- **Uncompressed**: `GsplatAssetUncompressed` stores per\-splat arrays (`Positions`, `Colors`, `Scales`, `Rotations`, optional `SHs`) and uploads them to dedicated GPU `GraphicsBuffer`s.
-- **Spark (Packed)**: `GsplatAssetSpark` packs each splat into a fixed 16\-byte layout (`uint4` per splat in `PackedSplats`) plus optional packed SH arrays (2 uints per splat for SH1, 4 uints for SH2, and 4 uints for SH3). Packing includes float16 position, log\-encoded scale, RGBA8, and octahedral axis\+angle quaternion encoding, which is inspired by [spark.js](https://github.com/sparkjsdev/spark/blob/main/src/shaders/splatDefines.glsl#L237C6-L237C25).
+SPZ v1-v4 decompression is implemented by `SpzLoader`; v4 uses the bundled Zstandard decoder. SOG images are decoded from WebP before their attributes are converted into the common representation.
 
-**GPU Resources & Lifetime**:
+The PlayCanvas `lod-meta.json` parser and streaming types remain in the source, but their importer and public documentation are temporarily disabled.
 
-- `GsplatRendererImpl` creates a per\-renderer `OrderBuffer` (which will later store the sorted indices of the splats), small buffers for cutouts data (`CutoutsBuffer`, `OrderSizeBuffer`, `BoundsBuffer`) and an `ISorterResource` (sorting support buffers and key buffer).
-- Per\-asset GPU data buffers are allocated and cached by `GsplatResourceManager` (reference counted), so multiple renderers can share the same uploaded asset.
-- Upload can be synchronous (`UploadData`) or asynchronous batched (`UploadDataAsync`), controlled by `GsplatRenderer.AsyncUpload`. The renderer can optionally draw before upload completes (`RenderBeforeUploadComplete`).
+## Shared resources and lifetime
 
-### Rendering Pipeline
+`GsplatSettings` owns the package-wide materials, compute shaders, render-order limits, and procedurally generated instance mesh. The instance mesh contains batches of quads; the vertex z value encodes the intra-instance splat index used by the vertex shader.
 
-The following steps are performed each frame for every active camera, except for the Sorting pass, which is executed only every Nth frame, and the Compute pass, which is executed only every Nth sort, as configured in the `GsplatRenderer`. The sorting and compute are also triggered when a camera moves past a certain threshold and can be manually triggered.
+`GsplatResourceManager` reference-counts uploaded resources by asset, allowing multiple renderers to share the same splat data. `GsplatRendererImpl` owns only renderer-specific state such as its order resource, active selection, cutout buffers, and current bounds.
 
-### Compute Prepass
+Uploads may be synchronous or asynchronous. Asynchronous work is owned by the resource and is cancellation-safe, preventing a released resource from being written after disposal. `RenderBeforeUploadComplete` allows the resident prefix to render while upload is still in progress.
 
-This pre-pass performs precalculations when needed. Currently, it is only used to generate the index buffer when cutouts are enabled.
+Native buffer-capable paths upload splat attributes to `GraphicsBuffer`s. The portable OpenGL/WebGL path instead uploads attributes and draw order to sampled textures. Spark integer data uses RGBA8 byte packing so it does not depend on sampled integer-texture support on mobile drivers.
 
-*   **InitOrder** (Optional): `GsplatRendererImpl.DispatchInitOrder`, if cutouts are used and have changed since last call, generate a sequential indices buffer (`OrderBuffer`), similar to `InitPayload`. While doing so, the prepass query the splats position to ignore any splats culled by a cutout. The new Bounds of the gaussian is calculated at the same time. Then, the remaining number of splats is extracted from the `OrderBuffer`.
+## Frame orchestration and sorting
 
-#### Sorting Pass
+`GsplatSorter` registers active `IGsplat` renderers and selects the sorting path from runtime graphics capabilities.
 
-This pass sorts the splats by their depth to the camera. The sorting is performed entirely on the GPU using `Gsplat.compute`. This compute shader leverages a highly optimized radix sort implementation from `DeviceRadixSort.hlsl`.
+### GPU radix path
 
-*   **Integration**: The sorting is initiated by custom render pipeline hooks: `GsplatURPFeature` for URP, `GsplatHDRPPass` for HDRP, or `GsplatSorter.OnPreCullCamera` for BiRP. These hooks call `GsplatSorter.DispatchSort`.
-*   **Sorting Steps**:
-    1.  **InitPayload** (Optional): If the payload buffer (`b_sortPayload`/`OrderBuffer`) has not been initialized, fill it with sequential indices (0, 1, 2, ... `SplatCount`-1).
-    2.  **CalcDepth**: `IGsplat.ComputeDepth` runs an asset\-specific compute kernel (`CalcDepth` or `CalcDepthSpark`) to calculates view-space depth of each splat, and stores them into `SorterResource.InputKeys` which will be used as the sorting key.
-    3.  **DeviceRadixSort**: The `Upsweep`, `Scan`, and `Downsweep` kernels execute a device-wide radix sort. It sorts the depth values in the `b_sort` buffer. Crucially, it applies the same reordering operations to the `b_sortPayload` buffer.
-*   **Result**: After the sort, the `b_sortPayload` buffer (which is the `OrderBuffer` from `GsplatRendererImpl`) contains the original splat indices, now sorted from back-to-front based on their depth to the camera.
+Compatible Direct3D 12, Vulkan, and Metal devices use the compute path:
 
-#### Render Pass
+1. An asset-specific depth kernel calculates view-space depth keys.
+2. `DeviceRadixSort.hlsl` performs upsweep, scan, and downsweep passes.
+3. The same radix operations reorder the payload containing original splat IDs.
+4. The resulting back-to-front IDs become the renderer's order buffer.
 
-With the splats sorted, they can now be drawn using `Gsplat.shader`.
-*   **Draw Call**: The `GsplatRendererImpl.Render` method issues a single draw call via `Graphics.RenderMeshPrimitives`. It uses GPU instancing to render multiple instances of the procedurally generated quad mesh, and a material from `GsplatAsset.Material` is selected based on the desired `SHBands`. All necessary buffers and parameters (`_MATRIX_M`, `_SplatCount`, etc.) are passed to the shader via a `MaterialPropertyBlock`.
-*   **Vertex Shader**:
-    1.  **Index Calculation**: It determines the final splat `order` to render by combining the `instanceID` with the intra-instance index stored in the vertex's z-component.
-    2.  **Fetch Sorted ID**: It uses this `order` to look up the actual splat `id` from the `_OrderBuffer`. This `id` corresponds to the correct, depth-sorted splat.
-    3.  **Fetch Splat Data**: Using this sorted `id`, it fetches (extracts) the splat's position, rotation, scale, color, and SH data from their respective buffers.
-    4.  **Apply Scale factor**: The splat's UV coordinates are multiplied by the splat's `_ScaleFactor`, cropping the splat to the given scale.
-    5.  **Covariance & Projection**: It calculates the 2D covariance matrix of the Gaussian in screen space. This determines the shape and size of the splat on the screen. It performs frustum and small-splat culling for efficiency.
-    6.  **SH Calculation** (Optional): If SHs are used, `EvalSH` is called to calculate the view-dependent color component, which is then added to the base color.
-    7.  **Vertex Output**: It calculates the final clip-space position of the quad's vertex by offsetting it from the splat's projected center based on the 2D covariance. The final color and UV coordinates (representing the position within the Gaussian ellipse) are passed to the fragment shader.
-*   **Fragment Shader**:
-    1.  It calculates the squared distance from the pixel to the center of the Gaussian ellipse using the interpolated UVs.
-    2.  If the pixel is outside the ellipse (`A > 1.0`), it is discarded.
-    3.  The alpha is calculated using an exponential falloff based on the distance, modulated by the splat's opacity. Pixels with very low alpha are discarded.
-    4.  An additional falloff, based on the scaling factor, is added to the alpha to keep the gaussian splats smooth. This prevents the harsh edges of cropped splats.
-    5.  The final color is the vertex color multiplied by the calculated alpha. An optional `Gamma To Linear` conversion can be applied before output.
+Wave/subgroup operations and compatible compute workgroup limits are required. The renderer automatically falls back when those requirements are unavailable.
 
+When global sorting is enabled and every active renderer satisfies the merge constraints, `GsplatGlobalRenderer` packs renderer and source IDs into one global order, sorts them together, and draws the merged result. Incompatible compression, layer, queue, or packed-index conditions return the scene to per-renderer drawing.
+
+### CPU fallback
+
+Direct3D 11, OpenGL Core, OpenGL ES, and native devices without the required GPU features use an asynchronous 16-bit counting sort. Native CPU-fallback platforms upload the order to a graphics buffer while the portable texture path uploads it as RGBA8 sampled data.
+
+WebGL 2 cannot use the worker-based native implementation, compute shaders, or structured buffers, so it performs the counting sort on Unity's main thread and renders entirely from sampled textures.
+
+Global merge and compute cutouts are disabled during CPU fallback. Each renderer retains one current order, prioritizing a game camera when several cameras request different viewpoints.
+
+## Cutouts and active source ranges
+
+On the compute path, `GsplatRendererImpl.DispatchInitOrder` rebuilds sequential source IDs, applies active cutouts, writes the surviving count, and can update bounds. The resulting order is then depth-sorted.
+
+`GsplatRenderer.SetActiveRanges` accepts sorted or unsorted half-open source ranges. It validates, merges, and expands them into exact source IDs. Explicit active ranges take precedence over compute cutouts until `ClearActiveRanges` restores the dense asset path. During asynchronous upload, only selected IDs that are already resident are exposed for sorting and drawing.
+
+## Render pass
+
+The Built-in Render Pipeline uses the camera callback integration in `GsplatSorter`. URP uses `GsplatURPFeature`, and HDRP uses `GsplatHDRPPass`. Unity 6000.0-6000.3 URP supports both the RenderGraph callback and the legacy compatibility-mode `Execute` callback; Unity 6000.4 and newer compile only the RenderGraph callback because URP removed the legacy override. These hooks coordinate sorting and submit draws for the current camera.
+
+`GsplatRendererImpl.Render` issues an instanced procedural-mesh draw. Its material is selected by compression mode, spherical-harmonic degree, and render order. Per-renderer buffers, textures, transforms, brightness, scale factor, and color-conversion state are supplied through a `MaterialPropertyBlock`.
+
+The vertex shader:
+
+1. Combines the instance ID with the mesh's encoded intra-instance index.
+2. Resolves that entry through the sorted order buffer or order texture.
+3. Fetches position, rotation, scale, color, and spherical-harmonic data.
+4. Evaluates view-dependent spherical-harmonic color when enabled.
+5. Projects the 3D Gaussian covariance into a screen-space ellipse.
+6. Culls off-screen or insignificant splats and outputs the quad position, ellipse coordinates, and color.
+
+The fragment shader evaluates the Gaussian exponential falloff, discards pixels outside the ellipse or below the alpha threshold, and outputs premultiplied alpha. `GammaToLinear` converts splat RGB before output and is enabled by default. A hidden serialized migration marker upgrades renderers created by earlier package versions once, while still allowing the option to be disabled afterward.
+
+## Bounds and editor integration
+
+Every imported `GsplatAsset` stores local-space bounds. `GsplatRenderer.FitBoxColliderToAssetBounds` copies the stored center and size to a `BoxCollider` on the same GameObject. The custom renderer inspector detects a newly added default `BoxCollider`, fits it automatically, and provides a manual **Fit Box Collider to Splat Bounds** button. `OnValidate` keeps the collider aligned when the assigned asset changes or is reimported. GameObject rotation and scale continue to be handled by Unity's transform and collider systems.
+
+Project-to-Hierarchy and Project-to-Scene drag-and-drop create a configured `GsplatRenderer`, assign the imported asset, and apply the package's 180-degree local Z rotation convention. Unity 6000.3 and newer use the V2 Hierarchy handler and resolve its 64-bit `EntityId`; Unity 6000.0-6000.2 retain the legacy `InstanceID` handler.

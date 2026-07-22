@@ -4,6 +4,9 @@
 
 - `GsplatRenderer` enables `GammaToLinear` by default and upgrades existing serialized renderers once while preserving later manual changes.
 - A `BoxCollider` added beside a `GsplatRenderer` is automatically fitted to the splat asset's local bounds. The renderer inspector also provides a manual refit button.
+- Fixed URP compilation on Unity 6000.4 and newer, where the legacy `ScriptableRenderPass.Execute` override has been removed in favor of RenderGraph.
+- Fixed Project-to-Hierarchy drag-and-drop on Unity 6000.4 and newer by using the 64-bit `EntityId` handler instead of the obsolete 32-bit `InstanceID` delegate.
+- Registered Gaussian-splat GLB support as a per-file importer override and added `Assets > UnitySplats > Choose GLB Importer...`, preventing UnitySplats from conflicting with general-purpose GLB importers such as glTFast.
 
 ## [1.4.0] - 2026-07-13
 
