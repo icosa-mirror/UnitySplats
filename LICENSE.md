@@ -1,9 +1,6 @@
 MIT License
 
-Copyright (c) 2025 Yize Wu
 Copyright (c) 2026 ARLOOPA
-Portions Copyright (c) 2026 Arthur Aillet
-Portions Copyright (c) 2026 Keir Rice
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
