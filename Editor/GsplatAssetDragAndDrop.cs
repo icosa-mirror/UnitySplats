@@ -92,10 +92,10 @@ namespace Gsplat.Editor
                 return System.Array.Empty<GsplatAsset>();
 
             var assets = new List<GsplatAsset>(dragged.Length);
-            var seen = new HashSet<int>();
+            var seen = new HashSet<GsplatAsset>();
             foreach (Object draggedObject in dragged)
             {
-                if (draggedObject is GsplatAsset asset && seen.Add(asset.GetInstanceID()))
+                if (draggedObject is GsplatAsset asset && seen.Add(asset))
                     assets.Add(asset);
             }
             return assets.ToArray();

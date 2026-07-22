@@ -136,7 +136,7 @@ namespace Gsplat
             public GsplatSortPass.SupportResources Resources { get; }
             public bool Initialized { get; set; }
             public bool UsesGpuSort => m_usesGpuSort;
-            public int CpuAssetId { get; private set; }
+            public GsplatAsset CpuAsset { get; private set; }
             public uint LastCpuRequestedCount { get; private set; } = uint.MaxValue;
 
             public Resource(uint count, GraphicsBuffer orderBuffer, bool useGpuSort, Texture2D orderTexture)
@@ -161,13 +161,13 @@ namespace Gsplat
                 Initialized = false;
             }
 
-            public void BindCpuCenters(int assetId, Vector3[] centers)
+            public void BindCpuCenters(GsplatAsset asset, Vector3[] centers)
             {
                 if (m_usesGpuSort || m_disposed)
                     return;
 
                 CancelCpuWork();
-                CpuAssetId = assetId;
+                CpuAsset = asset;
                 m_cpuCenters = centers ?? Array.Empty<Vector3>();
                 m_cpuGeneration++;
                 m_hasPendingCpuRequest = false;
@@ -240,7 +240,7 @@ namespace Gsplat
                     return;
 
                 CancelCpuWork();
-                CpuAssetId = 0;
+                CpuAsset = null;
                 m_cpuCenters = null;
                 m_activeSourceIds = null;
                 m_cpuGeneration++;
@@ -379,12 +379,12 @@ namespace Gsplat
         readonly HashSet<IGsplat> m_gsplats = new();
         readonly HashSet<Camera> m_camerasInjected = new();
         readonly List<IGsplat> m_activeGsplats = new();
-        readonly HashSet<int> m_warnedUncompressed = new();
-        readonly HashSet<int> m_warnedGlobalIndexLimit = new();
-        readonly HashSet<int> m_warnedGlobalLayer = new();
-        readonly HashSet<int> m_warnedGlobalRenderOrder = new();
+        readonly HashSet<UnityEngine.Object> m_warnedUncompressed = new();
+        readonly HashSet<UnityEngine.Object> m_warnedGlobalIndexLimit = new();
+        readonly HashSet<UnityEngine.Object> m_warnedGlobalLayer = new();
+        readonly HashSet<UnityEngine.Object> m_warnedGlobalRenderOrder = new();
         bool m_warnedGlobalCapacity;
-        readonly Dictionary<int, CpuCenterCache> m_cpuCenterCaches = new();
+        readonly Dictionary<GsplatAsset, CpuCenterCache> m_cpuCenterCaches = new();
         GsplatSortPass m_sortPass;
         Camera m_cpuSortCamera;
         bool m_warnedCpuFallback;
@@ -454,10 +454,10 @@ namespace Gsplat
 
             if (gsplat is UnityEngine.Object obj)
             {
-                m_warnedUncompressed.Remove(obj.GetInstanceID());
-                m_warnedGlobalIndexLimit.Remove(obj.GetInstanceID());
-                m_warnedGlobalLayer.Remove(obj.GetInstanceID());
-                m_warnedGlobalRenderOrder.Remove(obj.GetInstanceID());
+                m_warnedUncompressed.Remove(obj);
+                m_warnedGlobalIndexLimit.Remove(obj);
+                m_warnedGlobalLayer.Remove(obj);
+                m_warnedGlobalRenderOrder.Remove(obj);
             }
 
             m_globalRenderer.MarkGlobalBuffersDirty();
@@ -514,8 +514,6 @@ namespace Gsplat
             foreach (var gs in m_activeGsplats)
             {
                 var obj = gs as UnityEngine.Object;
-                var id = obj ? obj.GetInstanceID() : 0;
-
                 // Keep drawing streaming assets independently until their full GPU buffers
                 // are resident. Rebuilding the concatenated global buffers for every upload
                 // batch causes large allocation/copy spikes and can expose partial ranges.
@@ -525,7 +523,7 @@ namespace Gsplat
 
                 if (gs.GsplatResource is not GsplatResourceSpark)
                 {
-                    if (m_warnedUncompressed.Add(id))
+                    if (m_warnedUncompressed.Add(obj))
                         Debug.LogWarning(
                             $"[GsplatSorter] '{obj?.name}' uses an uncompressed asset; global sort requires every active renderer to use SPARK compression. Disabling global sort for this scene — all renderers fall back to per-renderer rendering.");
                     return false;
@@ -539,7 +537,7 @@ namespace Gsplat
                 var layer = (gs as Component)?.gameObject.layer ?? 0;
                 if (layer != commonLayer)
                 {
-                    if (m_warnedGlobalLayer.Add(id))
+                    if (m_warnedGlobalLayer.Add(obj))
                         Debug.LogWarning(
                             $"[GsplatSorter] '{obj?.name}' is on layer {layer}, while another active splat renderer is on layer {commonLayer}. A single merged draw cannot preserve different camera-culling layers, so global sort is disabled for this scene.");
                     return false;
@@ -547,7 +545,7 @@ namespace Gsplat
 
                 if (gs is GsplatRenderer { RenderOrder: not 0 } renderer)
                 {
-                    if (m_warnedGlobalRenderOrder.Add(id))
+                    if (m_warnedGlobalRenderOrder.Add(obj))
                         Debug.LogWarning(
                             $"[GsplatSorter] '{renderer.name}' uses custom Render Order {renderer.RenderOrder}. A single merged draw cannot preserve per-renderer transparent queues, so global sort is disabled for this scene.");
                     return false;
@@ -556,7 +554,7 @@ namespace Gsplat
                 // GlobalOrderBuffer packs the local splat ID into 24 bits.
                 if (gs.SplatCount > 0x01000000u)
                 {
-                    if (m_warnedGlobalIndexLimit.Add(id))
+                    if (m_warnedGlobalIndexLimit.Add(obj))
                         Debug.LogWarning(
                             $"[GsplatSorter] '{obj?.name}' has {gs.SplatCount} splats; global sort supports at most 16,777,216 splats per renderer. Falling back to per-renderer rendering.");
                     return false;
@@ -831,15 +829,14 @@ namespace Gsplat
                 return;
 
             UnbindSorterAsset(sorterResource);
-            var assetId = asset.GetInstanceID();
-            if (!m_cpuCenterCaches.TryGetValue(assetId, out var cache))
+            if (!m_cpuCenterCaches.TryGetValue(asset, out var cache))
             {
                 cache = new CpuCenterCache(CreateCpuCenters(asset));
-                m_cpuCenterCaches.Add(assetId, cache);
+                m_cpuCenterCaches.Add(asset, cache);
             }
 
             cache.RefCount++;
-            res.BindCpuCenters(assetId, cache.Centers);
+            res.BindCpuCenters(asset, cache.Centers);
         }
 
         public void UnbindSorterAsset(ISorterResource sorterResource)
@@ -847,14 +844,16 @@ namespace Gsplat
             if (sorterResource is not Resource { UsesGpuSort: false } res)
                 return;
 
-            var assetId = res.CpuAssetId;
+            var asset = res.CpuAsset;
             res.UnbindCpuCenters();
-            if (assetId == 0 || !m_cpuCenterCaches.TryGetValue(assetId, out var cache))
+            // A destroyed Unity object compares equal to null, but its managed reference is
+            // still the cache key and must be released.
+            if (ReferenceEquals(asset, null) || !m_cpuCenterCaches.TryGetValue(asset, out var cache))
                 return;
 
             cache.RefCount--;
             if (cache.RefCount <= 0)
-                m_cpuCenterCaches.Remove(assetId);
+                m_cpuCenterCaches.Remove(asset);
         }
 
         static Vector3[] CreateCpuCenters(GsplatAsset asset)

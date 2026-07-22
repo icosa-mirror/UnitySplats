@@ -11,12 +11,14 @@ namespace Gsplat
             public int RefCount;
         }
 
-        static readonly Dictionary<int, Cache> k_resourceCache = new();
+        static readonly Dictionary<GsplatAsset, Cache> k_resourceCache = new();
 
         public static GsplatResource Get(GsplatAsset asset)
         {
-            var key = asset.GetInstanceID();
-            if (k_resourceCache.TryGetValue(key, out var cache))
+            if (!asset)
+                throw new System.ArgumentNullException(nameof(asset));
+
+            if (k_resourceCache.TryGetValue(asset, out var cache))
             {
                 cache.RefCount++;
                 return cache.Resource;
@@ -27,20 +29,17 @@ namespace Gsplat
                 Resource = asset.CreateResource(),
                 RefCount = 1
             };
-            k_resourceCache[key] = cache;
+            k_resourceCache[asset] = cache;
             return cache.Resource;
         }
 
         public static void Release(GsplatAsset asset)
         {
-            Release(asset.GetInstanceID());
-        }
-
-        public static void Release(int instanceID)
-        {
-            if (instanceID == 0)
+            // A destroyed Unity object compares equal to null, but its managed reference is
+            // still the cache key and must be released.
+            if (ReferenceEquals(asset, null))
                 return;
-            if (!k_resourceCache.TryGetValue(instanceID, out var cache))
+            if (!k_resourceCache.TryGetValue(asset, out var cache))
             {
                 Debug.LogWarning("Trying to release a GPU resource that is not cached.");
                 return;
@@ -49,7 +48,7 @@ namespace Gsplat
             cache.RefCount--;
             if (cache.RefCount != 0) return;
             cache.Resource.Dispose();
-            k_resourceCache.Remove(instanceID);
+            k_resourceCache.Remove(asset);
         }
     }
 }

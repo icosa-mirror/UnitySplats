@@ -137,8 +137,6 @@ namespace Gsplat.Tests
                     typeof(GsplatRendererImpl));
 #pragma warning restore SYSLIB0050
                 PrivateField<GsplatRendererImpl>("m_gsplatAsset").SetValue(implementation, asset);
-                PrivateField<GsplatRendererImpl>("m_gsplatAssetID").SetValue(implementation,
-                    asset.GetInstanceID());
                 implementation.GsplatResource = resource;
 
                 var renderer = gameObject.AddComponent<GsplatRenderer>();

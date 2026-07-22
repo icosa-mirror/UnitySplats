@@ -47,7 +47,7 @@ namespace Gsplat
         GsplatActiveRange[] m_activeRanges;
         IReadOnlyList<GsplatActiveRange> m_activeRangesView;
         uint[] m_activeSourceIds;
-        int m_activeRangesAssetId;
+        GsplatAsset m_activeRangesAsset;
 
         sealed class ActiveRangeOffsetComparer : IComparer<GsplatActiveRange>
         {
@@ -190,7 +190,7 @@ namespace Gsplat
             m_activeRanges = normalized;
             m_activeRangesView = Array.AsReadOnly(normalized);
             m_activeSourceIds = sourceIds;
-            m_activeRangesAssetId = GsplatAsset.GetInstanceID();
+            m_activeRangesAsset = GsplatAsset;
 
             if (m_renderer != null && m_prevAsset == GsplatAsset && m_renderer.GsplatResource != null)
                 m_renderer.SetActiveSourceIds(sourceIds);
@@ -295,7 +295,7 @@ namespace Gsplat
             m_activeRanges = null;
             m_activeRangesView = null;
             m_activeSourceIds = null;
-            m_activeRangesAssetId = 0;
+            m_activeRangesAsset = null;
         }
 
 #if UNITY_EDITOR
@@ -358,7 +358,7 @@ namespace Gsplat
             }
             else if (m_prevAsset != GsplatAsset)
             {
-                if (m_activeSourceIds != null && m_activeRangesAssetId != GsplatAsset.GetInstanceID())
+                if (m_activeSourceIds != null && m_activeRangesAsset != GsplatAsset)
                     ClearActiveRangeState();
                 else if (m_activeSourceIds is { Length: > 0 } &&
                          m_activeSourceIds[m_activeSourceIds.Length - 1] >= GsplatAsset.SplatCount)

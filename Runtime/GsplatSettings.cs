@@ -47,7 +47,7 @@ namespace Gsplat
                         settings.Materials = DefaultMaterials;
                         settings.GlobalMaterial = DefaultGlobalMaterial;
                         settings.m_prevComputeShader = null;
-                        settings.Version = GsplatUtils.k_Version;
+                        settings.Version = GsplatUtils.k_SettingsVersion;
                         settings.OnValidate();
                         EditorUtility.SetDirty(settings);
                         AssetDatabase.SaveAssets();
@@ -56,7 +56,7 @@ namespace Gsplat
                     {
                         Debug.Log($"Updated GsplatSettings from version {settings.Version}.");
                         settings.GlobalMaterial = DefaultGlobalMaterial;
-                        settings.Version = GsplatUtils.k_Version;
+                        settings.Version = GsplatUtils.k_SettingsVersion;
                         settings.OnValidate();
                         EditorUtility.SetDirty(settings);
                         AssetDatabase.SaveAssets();
@@ -106,7 +106,7 @@ namespace Gsplat
         ComputeShader m_prevComputeShader;
         uint m_prevSplatInstanceSize;
 
-        [HideInInspector] [SerializeField] string m_version = "1.0.0";
+        [HideInInspector] [SerializeField] string m_version = "1.4.0";
 
 #if UNITY_EDITOR
         static ComputeShader DefaultComputeShader => AssetDatabase.LoadAssetAtPath<ComputeShader>(
@@ -132,7 +132,7 @@ namespace Gsplat
 
         public void Reset()
         {
-            Version = GsplatUtils.k_Version;
+            Version = GsplatUtils.k_SettingsVersion;
             ComputeShader = DefaultComputeShader;
             GlobalMaterial = DefaultGlobalMaterial;
             Materials = DefaultMaterials;

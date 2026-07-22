@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.1] - 2026-07-22
+
+### Fixed
+
+- Fixed Unity 6.5 compilation by replacing deprecated 32-bit `GetInstanceID()` cache keys with direct Unity object references, compatible with Unity's 64-bit `EntityId` transition.
+
+### Documentation
+
+- Added an OpenUPM installation option that lets Unity resolve the declared Unity.WebP dependency automatically.
+
 ## [1.0.0] - 2026-07-22
 
 ### Added
@@ -46,5 +56,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Fixed URP compilation on Unity 6000.4 and newer, where the legacy `ScriptableRenderPass.Execute` override was removed in favor of RenderGraph.
 - Fixed Project-to-Hierarchy drag-and-drop on Unity 6000.4 and newer by using the 64-bit `EntityId` handler instead of the obsolete 32-bit `InstanceID` delegate.
 
-[unreleased]: https://github.com/arloopa/UnitySplats/compare/v1.0.0...HEAD
+[unreleased]: https://github.com/arloopa/UnitySplats/compare/v1.0.1...HEAD
+[1.0.1]: https://github.com/arloopa/UnitySplats/compare/v1.0.0...v1.0.1
 [1.0.0]: https://github.com/arloopa/UnitySplats/releases/tag/v1.0.0

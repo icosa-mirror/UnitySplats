@@ -1,6 +1,6 @@
 # UnitySplats
 
-[![Version](https://img.shields.io/badge/version-v1.0.0-blue.svg)](./CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-v1.0.1-blue.svg)](./CHANGELOG.md)
 [![Unity](https://img.shields.io/badge/Unity-6000.0%2B-black.svg)](https://unity.com/)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](./LICENSE.md)
 
@@ -75,7 +75,30 @@ Global merge is enabled only when all active renderers are fully uploaded, Spark
 
 ## Installation
 
-### Install from a Git URL
+### Install from a Git URL with automatic Unity.WebP resolution
+
+UnitySplats already declares Unity.WebP 0.3.22 as a package dependency. To let Unity resolve it automatically, add the OpenUPM registry for the `com.netpyoung` scope and the UnitySplats Git URL to the target project's `Packages/manifest.json`:
+
+```json
+{
+  "scopedRegistries": [
+    {
+      "name": "OpenUPM",
+      "url": "https://package.openupm.com",
+      "scopes": [
+        "com.netpyoung"
+      ]
+    }
+  ],
+  "dependencies": {
+    "com.arloopa.unitysplats": "https://github.com/arloopa/UnitySplats.git"
+  }
+}
+```
+
+Merge these entries with any existing registries and dependencies. Unity then installs Unity.WebP automatically when it resolves UnitySplats.
+
+### Install both packages from Git URLs
 
 Unity Package Manager cannot resolve one Git package as a transitive dependency of another Git package. Install Unity.WebP first:
 
@@ -95,7 +118,7 @@ Unity Package Manager cannot resolve one Git package as a transitive dependency 
 
 This installs the repository's current default branch.
 
-### Install from `manifest.json`
+### Install both Git dependencies from `manifest.json`
 
 Add both direct dependencies to the target project's `Packages/manifest.json`:
 
@@ -112,9 +135,9 @@ Keep the project's other dependencies in the same object.
 
 ### Install from a release archive
 
-Download the UnitySplats release ZIP and extract it outside the target project's `Assets` folder. Install Unity.WebP first using its Git URL above or a separately downloaded Unity.WebP package. Then open `Window > Package Manager`, choose `+ > Install package from disk...`, and select the UnitySplats `package.json`.
+Download the UnitySplats release ZIP and extract it outside the target project's `Assets` folder. Configure the OpenUPM registry above, install Unity.WebP using its Git URL, or add a separately downloaded Unity.WebP package. Then open `Window > Package Manager`, choose `+ > Install package from disk...`, and select the UnitySplats `package.json`.
 
-The UnitySplats source archive does not bundle Unity.WebP. Unity requires Git dependencies to be declared directly in the consuming project's `Packages/manifest.json`, which is why Unity.WebP must be installed separately.
+The UnitySplats source archive does not bundle Unity.WebP. Unity only accepts Git dependency URLs in the consuming project's `Packages/manifest.json`; package-to-package automatic resolution therefore requires a scoped registry such as OpenUPM.
 
 ## Render-pipeline setup
 

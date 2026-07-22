@@ -20,7 +20,6 @@ namespace Gsplat
         GsplatAsset m_gsplatAsset;
         public uint m_remainingCount = 0;
         public Bounds m_bounds;
-        int m_gsplatAssetID;
 
         public GsplatResource GsplatResource;
         public GraphicsBuffer OrderBuffer { get; private set; }
@@ -46,7 +45,7 @@ namespace Gsplat
         uint m_sortsBeforeRecomputeCutouts = 0;
         public bool ComputeSortRequired = true;
         public bool ComputeCutoutsRequired = true;
-        Dictionary<int, (Vector3, Vector3)> m_prevCamTransforms;
+        Dictionary<Camera, (Vector3, Vector3)> m_prevCamTransforms;
 
         GsplatCutout.ShaderData[] m_cutoutsData;
         uint m_prevSplatCount;
@@ -55,7 +54,7 @@ namespace Gsplat
         public GsplatRendererImpl(uint splatCount)
         {
             SplatCount = splatCount;
-            m_prevCamTransforms = new Dictionary<int, (Vector3, Vector3)>();
+            m_prevCamTransforms = new Dictionary<Camera, (Vector3, Vector3)>();
             CreateResources(splatCount);
             CreatePropertyBlock();
         }
@@ -198,7 +197,7 @@ namespace Gsplat
 
         public void BindGsplatAsset(GsplatAsset gsplatAsset, bool asyncUpload = false)
         {
-            Debug.Assert(m_gsplatAssetID == 0);
+            Debug.Assert(!m_gsplatAsset);
             // Capacity can be reused for a same-count asset, but its prior permutation and
             // cutout membership are asset-specific and must never survive the rebind.
             SorterResource.Initialized = false;
@@ -209,7 +208,6 @@ namespace Gsplat
             ComputeCutoutsRequired = true;
             ForceRefresh();
 
-            m_gsplatAssetID = gsplatAsset.GetInstanceID();
             m_gsplatAsset = gsplatAsset;
             GsplatResource = GsplatResourceManager.Get(gsplatAsset);
             gsplatAsset.SetupMaterialPropertyBlock(m_propertyBlock, GsplatResource);
@@ -250,10 +248,9 @@ namespace Gsplat
                 m_activeSourceIds = null;
             }
             GsplatSorter.Instance.UnbindSorterAsset(SorterResource);
-            GsplatResourceManager.Release(m_gsplatAssetID);
+            GsplatResourceManager.Release(m_gsplatAsset);
             GsplatResource = null;
             m_gsplatAsset = null;
-            m_gsplatAssetID = 0;
         }
 
         /// <summary>
@@ -356,8 +353,7 @@ namespace Gsplat
         {
             foreach (var cam in Camera.allCameras)
             {
-                var id = cam.GetInstanceID();
-                if (m_prevCamTransforms.TryGetValue(id, out (Vector3, Vector3) prevCamTransform))
+                if (m_prevCamTransforms.TryGetValue(cam, out (Vector3, Vector3) prevCamTransform))
                 {
                     (Vector3 prevCamPos, Vector3 prevCamRot) = prevCamTransform;
 
@@ -366,13 +362,13 @@ namespace Gsplat
                         || (cam.transform.eulerAngles - prevCamRot).magnitude >
                         GsplatSettings.Instance.CameraRotationRefreshTreshold)
                     {
-                        m_prevCamTransforms[id] = (cam.transform.position, cam.transform.eulerAngles);
+                        m_prevCamTransforms[cam] = (cam.transform.position, cam.transform.eulerAngles);
                         ForceRefresh();
                     }
                 }
                 else
                 {
-                    m_prevCamTransforms.Add(cam.GetInstanceID(), (cam.transform.position, cam.transform.eulerAngles));
+                    m_prevCamTransforms.Add(cam, (cam.transform.position, cam.transform.eulerAngles));
                     ForceRefresh();
                 }
             }
