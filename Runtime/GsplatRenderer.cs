@@ -34,7 +34,8 @@ namespace Gsplat
         [Range(0, 1)]
         public float SplatDownscaleFactor = 0.0f;
 
-        public bool GammaToLinear;
+        public bool GammaToLinear = true;
+        [SerializeField, HideInInspector] bool m_gammaToLinearDefaultApplied;
         public bool AsyncUpload;
         public bool RenderBeforeUploadComplete = true;
 
@@ -94,6 +95,24 @@ namespace Gsplat
         {
             get => m_renderer.m_bounds;
             set => m_renderer.m_bounds = value;
+        }
+
+        /// <summary>
+        /// Fits a BoxCollider on this GameObject to the local bounds stored by the splat asset.
+        /// Returns true when the collider bounds were changed.
+        /// </summary>
+        public bool FitBoxColliderToAssetBounds()
+        {
+            if (!GsplatAsset || !TryGetComponent(out BoxCollider boxCollider))
+                return false;
+
+            Bounds assetBounds = GsplatAsset.Bounds;
+            if (boxCollider.center == assetBounds.center && boxCollider.size == assetBounds.size)
+                return false;
+
+            boxCollider.center = assetBounds.center;
+            boxCollider.size = assetBounds.size;
+            return true;
         }
 
         public GsplatCutout[] Cutouts
@@ -296,8 +315,20 @@ namespace Gsplat
 
         void OnValidate()
         {
+            // Migrate renderers serialized before GammaToLinear became enabled by default.
+            // The marker makes this a one-time upgrade, so users can still disable it later.
+            if (!m_gammaToLinearDefaultApplied)
+            {
+                GammaToLinear = true;
+                m_gammaToLinearDefaultApplied = true;
+            }
+
             ForceRefresh();
 #if UNITY_EDITOR
+            // Keep an attached collider aligned when the selected splat asset changes or is
+            // reimported. The custom inspector also handles the moment a BoxCollider is added.
+            if (FitBoxColliderToAssetBounds() && TryGetComponent(out BoxCollider boxCollider))
+                EditorUtility.SetDirty(boxCollider);
             if (GsplatAsset &&
                 AssetDatabase.TryGetGUIDAndLocalFileIdentifier(GsplatAsset, out var guid, out long localId))
                 m_assetGuid = guid;

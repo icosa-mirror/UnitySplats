@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- `GsplatRenderer` enables `GammaToLinear` by default and upgrades existing serialized renderers once while preserving later manual changes.
+- A `BoxCollider` added beside a `GsplatRenderer` is automatically fitted to the splat asset's local bounds. The renderer inspector also provides a manual refit button.
+
 ## [1.4.0] - 2026-07-13
 
 - Added PlayCanvas standard/compressed PLY, SOG v1/v2, SPZ v1-v4, and Gaussian-splat GLB decoding.

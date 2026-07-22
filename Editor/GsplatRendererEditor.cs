@@ -11,6 +11,7 @@ namespace Gsplat.Editor
     {
         public override void OnInspectorGUI()
         {
+            FitNewBoxColliderToAssetBounds();
             serializedObject.Update();
 
             var rendererTargetEarly = (GsplatRenderer)target;
@@ -100,7 +101,39 @@ namespace Gsplat.Editor
                 EditorGUI.indentLevel--;
             }
 
+            if (((GsplatRenderer)target).TryGetComponent<BoxCollider>(out _))
+            {
+                if (GUILayout.Button("Fit Box Collider to Splat Bounds"))
+                {
+                    var boxCollider = rendererTarget.GetComponent<BoxCollider>();
+                    Undo.RecordObject(boxCollider, "Fit Box Collider to Splat Bounds");
+                    rendererTarget.FitBoxColliderToAssetBounds();
+                    EditorUtility.SetDirty(boxCollider);
+                }
+            }
+
             serializedObject.ApplyModifiedProperties();
+        }
+
+        void FitNewBoxColliderToAssetBounds()
+        {
+            var rendererTarget = (GsplatRenderer)target;
+            if (!rendererTarget.GsplatAsset ||
+                !rendererTarget.TryGetComponent(out BoxCollider boxCollider))
+                return;
+
+            // A newly added BoxCollider has Unity's default local bounds. Fit only that state
+            // during inspector redraws so intentional collider edits are not continually lost.
+            if (boxCollider.center != Vector3.zero || boxCollider.size != Vector3.one)
+                return;
+
+            Bounds assetBounds = rendererTarget.GsplatAsset.Bounds;
+            if (assetBounds.center == boxCollider.center && assetBounds.size == boxCollider.size)
+                return;
+
+            Undo.RecordObject(boxCollider, "Fit Box Collider to Splat Bounds");
+            rendererTarget.FitBoxColliderToAssetBounds();
+            EditorUtility.SetDirty(boxCollider);
         }
     }
 }
