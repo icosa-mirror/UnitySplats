@@ -40,6 +40,46 @@ namespace Gsplat.Tests
         }
 
         [Test]
+        public void WorldBoundsMatchAllTransformedCorners()
+        {
+            var localBounds = new Bounds(
+                new Vector3(1f, -2f, 0.5f),
+                new Vector3(4f, 6f, 8f));
+            var transform = Matrix4x4.TRS(
+                new Vector3(7f, -3f, 11f),
+                Quaternion.Euler(25f, -40f, 12f),
+                new Vector3(-2f, 0.5f, 3f));
+
+            Bounds actual = GsplatUtils.CalcWorldBounds(localBounds, transform);
+            Bounds expected = default;
+            bool first = true;
+            for (var x = -1; x <= 1; x += 2)
+            for (var y = -1; y <= 1; y += 2)
+            for (var z = -1; z <= 1; z += 2)
+            {
+                Vector3 corner = localBounds.center +
+                                 Vector3.Scale(localBounds.extents, new Vector3(x, y, z));
+                Vector3 worldCorner = transform.MultiplyPoint3x4(corner);
+                if (first)
+                {
+                    expected = new Bounds(worldCorner, Vector3.zero);
+                    first = false;
+                }
+                else
+                {
+                    expected.Encapsulate(worldCorner);
+                }
+            }
+
+            Assert.That(actual.center.x, Is.EqualTo(expected.center.x).Within(0.0001f));
+            Assert.That(actual.center.y, Is.EqualTo(expected.center.y).Within(0.0001f));
+            Assert.That(actual.center.z, Is.EqualTo(expected.center.z).Within(0.0001f));
+            Assert.That(actual.extents.x, Is.EqualTo(expected.extents.x).Within(0.0001f));
+            Assert.That(actual.extents.y, Is.EqualTo(expected.extents.y).Within(0.0001f));
+            Assert.That(actual.extents.z, Is.EqualTo(expected.extents.z).Within(0.0001f));
+        }
+
+        [Test]
         public void BroadPhaseHonorsRendererDownscaleAndQueryRadius()
         {
             var localBounds = new Bounds(Vector3.zero, Vector3.zero);

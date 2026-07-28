@@ -216,26 +216,17 @@ namespace Gsplat
 
         public static Bounds CalcWorldBounds(Bounds localBounds, Matrix4x4 localToWorld)
         {
-            var localCenter = localBounds.center;
             var localExtents = localBounds.extents;
-
-            var localCorners = new[]
-            {
-                localCenter + new Vector3(localExtents.x, localExtents.y, localExtents.z),
-                localCenter + new Vector3(localExtents.x, localExtents.y, -localExtents.z),
-                localCenter + new Vector3(localExtents.x, -localExtents.y, localExtents.z),
-                localCenter + new Vector3(localExtents.x, -localExtents.y, -localExtents.z),
-                localCenter + new Vector3(-localExtents.x, localExtents.y, localExtents.z),
-                localCenter + new Vector3(-localExtents.x, localExtents.y, -localExtents.z),
-                localCenter + new Vector3(-localExtents.x, -localExtents.y, localExtents.z),
-                localCenter + new Vector3(-localExtents.x, -localExtents.y, -localExtents.z)
-            };
-
-            var worldBounds = new Bounds(localToWorld.MultiplyPoint3x4(localCorners[0]), Vector3.zero);
-            for (var i = 1; i < 8; i++)
-                worldBounds.Encapsulate(localToWorld.MultiplyPoint3x4(localCorners[i]));
-
-            return worldBounds;
+            Vector3 axisX = localToWorld.MultiplyVector(new Vector3(localExtents.x, 0f, 0f));
+            Vector3 axisY = localToWorld.MultiplyVector(new Vector3(0f, localExtents.y, 0f));
+            Vector3 axisZ = localToWorld.MultiplyVector(new Vector3(0f, 0f, localExtents.z));
+            var worldExtents = new Vector3(
+                Mathf.Abs(axisX.x) + Mathf.Abs(axisY.x) + Mathf.Abs(axisZ.x),
+                Mathf.Abs(axisX.y) + Mathf.Abs(axisY.y) + Mathf.Abs(axisZ.y),
+                Mathf.Abs(axisX.z) + Mathf.Abs(axisY.z) + Mathf.Abs(axisZ.z));
+            return new Bounds(
+                localToWorld.MultiplyPoint3x4(localBounds.center),
+                worldExtents * 2f);
         }
 
         public static uint DivRoundUp(uint x, uint y) => (x + y - 1) / y;
