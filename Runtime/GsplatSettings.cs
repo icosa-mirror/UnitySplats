@@ -66,10 +66,23 @@ namespace Gsplat
 
                     if (previousVersion < new Version("1.6.0"))
                     {
-                        // Depth writing is opt-in. Existing projects must retain the package's
-                        // previous color-only behavior until they choose a cutoff explicitly.
-                        settings.DepthPrepassAlphaCutoff = 1.1f;
-                        settings.IntersectionShader = DefaultIntersectionShader;
+                        // A package without this field deserializes it as zero, which would
+                        // unexpectedly enable depth writing. Preserve an explicitly serialized
+                        // cutoff from compatible forks, but keep base-package upgrades color-only.
+                        string assetPath = AssetDatabase.GetAssetPath(settings);
+                        bool hadSerializedCutoff = !string.IsNullOrEmpty(assetPath) &&
+                            File.Exists(assetPath) &&
+                            File.ReadAllText(assetPath).Contains(
+                                $"{nameof(DepthPrepassAlphaCutoff)}:");
+                        if (!hadSerializedCutoff)
+                            settings.DepthPrepassAlphaCutoff = 1.1f;
+                        changed = true;
+                    }
+
+                    if (previousVersion < new Version("1.7.0"))
+                    {
+                        if (!settings.IntersectionShader)
+                            settings.IntersectionShader = DefaultIntersectionShader;
                         changed = true;
                     }
 
@@ -134,7 +147,7 @@ namespace Gsplat
         ComputeShader m_prevComputeShader;
         uint m_prevSplatInstanceSize;
 
-        [HideInInspector] [SerializeField] string m_version = "1.6.0";
+        [HideInInspector] [SerializeField] string m_version = "1.7.0";
 
 #if UNITY_EDITOR
         static ComputeShader DefaultComputeShader => AssetDatabase.LoadAssetAtPath<ComputeShader>(
