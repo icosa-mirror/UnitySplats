@@ -6,6 +6,9 @@ using System.Linq;
 using System.Runtime.InteropServices;
 using UnityEngine;
 using UnityEngine.Rendering;
+#if UNITY_6000_0_OR_NEWER
+using UnityEngine.Rendering.RenderGraphModule;
+#endif
 
 namespace Gsplat
 {
@@ -79,6 +82,7 @@ namespace Gsplat
                              && m_kernelMergeTwoWithDepth >= 0
                              && m_kernelCopyUint4 >= 0
                              && m_kernelCopyUint2 >= 0;
+        public int RenderLayer => m_globalLayer;
 
         const string k_mergePassName = "Gsplat.MergeKWay";
 
@@ -125,6 +129,7 @@ namespace Gsplat
         static readonly int k_rendererParamsProp = Shader.PropertyToID("_RendererParams");
         static readonly int k_totalSplatCount = Shader.PropertyToID("_TotalSplatCount");
         static readonly int k_splatInstanceSize = Shader.PropertyToID("_SplatInstanceSize");
+        static readonly int k_depthPrepassAlphaCutoff = Shader.PropertyToID("_DepthPrepassAlphaCutoff");
 
         public void InitGlobal(GsplatGlobalMaterial globalMaterial)
         {
@@ -191,7 +196,6 @@ namespace Gsplat
 
             UpdateRendererTransforms(activeGsplats);
             UpdateRendererParams(activeGsplats);
-            Render();
         }
 
         public void DispatchMerge(CommandBuffer cmd, List<IGsplat> activeGsplats)
@@ -510,17 +514,57 @@ namespace Gsplat
         // -----------------------------------------------------------------------
         // Global draw call
         // -----------------------------------------------------------------------
-        void Render()
+        public void RenderColor(CommandBuffer cmd)
         {
-            // m_globalBuffersDirty: the active renderer set changed and the next DispatchSort
-            // hasn't validated/rebuilt the buffers yet. Drawing now would bind stale buffers
-            // (under URP, DrawAllIfEnabled fires before DispatchSort each frame).
-            if (m_globalBuffersDirty || m_globalOrderBuffer == null || m_totalRemainingCount == 0) return;
+            if (!PrepareDrawProperties())
+                return;
 
-            // Bind buffers via a MaterialPropertyBlock rather than on the material itself, so
-            // each queued draw captures its own bindings and multiple cameras (Game + SceneView,
-            // or any multi-camera setup) don't overwrite one another's state before the GPU
-            // executes them.
+            int instances = Mathf.CeilToInt(m_totalRemainingCount / (float)GsplatSettings.Instance.SplatInstanceSize);
+            cmd.DrawMeshInstancedProcedural(GsplatSettings.Instance.Mesh, 0,
+                m_globalMaterial.Materials[m_globalSHBands], 0, instances, m_globalPropertyBlock);
+        }
+
+        public void RenderDepth(CommandBuffer cmd)
+        {
+            if (!GsplatSettings.Instance.DepthWritingEnabled || !m_globalMaterial.DepthValid() ||
+                !PrepareDrawProperties())
+                return;
+
+            int instances = Mathf.CeilToInt(m_totalRemainingCount / (float)GsplatSettings.Instance.SplatInstanceSize);
+            cmd.DrawMeshInstancedProcedural(GsplatSettings.Instance.Mesh, 0,
+                m_globalMaterial.DepthMaterials[m_globalSHBands], 0, instances, m_globalPropertyBlock);
+        }
+
+#if UNITY_6000_0_OR_NEWER
+        public void RenderColor(RasterCommandBuffer cmd)
+        {
+            if (!PrepareDrawProperties())
+                return;
+
+            int instances = Mathf.CeilToInt(m_totalRemainingCount / (float)GsplatSettings.Instance.SplatInstanceSize);
+            cmd.DrawMeshInstancedProcedural(GsplatSettings.Instance.Mesh, 0,
+                m_globalMaterial.Materials[m_globalSHBands], 0, instances, m_globalPropertyBlock);
+        }
+
+        public void RenderDepth(RasterCommandBuffer cmd)
+        {
+            if (!GsplatSettings.Instance.DepthWritingEnabled || !m_globalMaterial.DepthValid() ||
+                !PrepareDrawProperties())
+                return;
+
+            int instances = Mathf.CeilToInt(m_totalRemainingCount / (float)GsplatSettings.Instance.SplatInstanceSize);
+            cmd.DrawMeshInstancedProcedural(GsplatSettings.Instance.Mesh, 0,
+                m_globalMaterial.DepthMaterials[m_globalSHBands], 0, instances, m_globalPropertyBlock);
+        }
+#endif
+
+        bool PrepareDrawProperties()
+        {
+            // A dirty global buffer has not yet been validated and filled by this camera's
+            // sort pass, so drawing it could bind released or uninitialized resources.
+            if (m_globalBuffersDirty || m_globalOrderBuffer == null || m_totalRemainingCount == 0)
+                return false;
+
             m_globalPropertyBlock ??= new MaterialPropertyBlock();
             m_globalPropertyBlock.Clear();
             m_globalPropertyBlock.SetBuffer(k_globalOrderBuffer, m_globalOrderBuffer);
@@ -530,6 +574,8 @@ namespace Gsplat
             m_globalPropertyBlock.SetBuffer(k_rendererParamsProp, m_rendererParamsBuffer);
             m_globalPropertyBlock.SetInteger(k_totalSplatCount, (int)m_totalRemainingCount);
             m_globalPropertyBlock.SetInteger(k_splatInstanceSize, (int)GsplatSettings.Instance.SplatInstanceSize);
+            m_globalPropertyBlock.SetFloat(k_depthPrepassAlphaCutoff,
+                GsplatSettings.Instance.DepthPrepassAlphaCutoff);
 
             if (m_globalSHBands >= 1)
                 m_globalPropertyBlock.SetBuffer(k_globalSH1Buffer, m_globalSH1Buffer);
@@ -539,18 +585,8 @@ namespace Gsplat
                 m_globalPropertyBlock.SetBuffer(k_globalSH3Buffer, m_globalSH3Buffer);
             if (m_globalSHBands >= 4)
                 m_globalPropertyBlock.SetBuffer(k_globalSH4Buffer, m_globalSH4Buffer);
-
-            var rp = new RenderParams(m_globalMaterial.Materials[m_globalSHBands])
-            {
-                worldBounds = new Bounds(Vector3.zero, Vector3.one * 1e6f),
-                matProps = m_globalPropertyBlock,
-                layer = m_globalLayer
-            };
-
-            int instances = Mathf.CeilToInt(m_totalRemainingCount / (float)GsplatSettings.Instance.SplatInstanceSize);
-            Graphics.RenderMeshPrimitives(rp, GsplatSettings.Instance.Mesh, 0, instances);
+            return true;
         }
-
 
         // -----------------------------------------------------------------------
         // Cleanup

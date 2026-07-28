@@ -10,6 +10,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - Added per-renderer cross-renderer sort participation, allowing isolated previews and compositors to retain independent draws without disabling compatible world-renderer merging.
+- Added opt-in alpha-tested splat depth materials and project settings for Spark, uncompressed, and globally merged rendering. The default cutoff of `1.1` preserves color-only behavior.
+
+### Changed
+
+- Made Built-in, URP RenderGraph/compatibility, and HDRP splat draw ownership explicit so color renders once before optional depth writing and ordinary transparent content.
 
 ## [1.1.0] - 2026-07-22
 
