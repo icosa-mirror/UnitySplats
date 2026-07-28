@@ -459,9 +459,10 @@ namespace Gsplat
         public void RenderDepth(CommandBuffer cmd, Transform transform, float scaleFactor = 1.0f,
             uint renderOrder = 0)
         {
+            if (m_remainingCount <= 0 || !GsplatSettings.Instance.DepthWritingEnabled)
+                return;
             var depthMaterials = m_gsplatAsset.GsplatMaterial.DepthMaterials;
-            if (m_remainingCount <= 0 || !GsplatSettings.Instance.DepthWritingEnabled ||
-                depthMaterials == null)
+            if (depthMaterials == null)
                 return;
 
             ConfigureDepthProperties(transform, scaleFactor);
@@ -488,9 +489,10 @@ namespace Gsplat
         public void RenderDepth(RasterCommandBuffer cmd, Transform transform, float scaleFactor = 1.0f,
             uint renderOrder = 0)
         {
+            if (m_remainingCount <= 0 || !GsplatSettings.Instance.DepthWritingEnabled)
+                return;
             var depthMaterials = m_gsplatAsset.GsplatMaterial.DepthMaterials;
-            if (m_remainingCount <= 0 || !GsplatSettings.Instance.DepthWritingEnabled ||
-                depthMaterials == null)
+            if (depthMaterials == null)
                 return;
 
             ConfigureDepthProperties(transform, scaleFactor);
