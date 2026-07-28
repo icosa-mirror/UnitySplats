@@ -9,6 +9,9 @@ using UnityEditor;
 #endif
 using UnityEngine;
 using UnityEngine.Rendering;
+#if UNITY_6000_0_OR_NEWER
+using UnityEngine.Rendering.RenderGraphModule;
+#endif
 
 namespace Gsplat
 {
@@ -160,6 +163,30 @@ namespace Gsplat
         [HideInInspector] public uint CutoutsRefreshRate = 1;
 
         public void ComputeDepth(CommandBuffer cmd, Matrix4x4 matrixMv) => m_renderer.ComputeDepth(cmd, matrixMv);
+
+        public void RenderColor(CommandBuffer cmd)
+        {
+            m_renderer.RenderColor(cmd, transform, GammaToLinear, SHDegree, Brightness,
+                1.0f - SplatDownscaleFactor, RenderOrder);
+        }
+
+        public void RenderDepth(CommandBuffer cmd)
+        {
+            m_renderer.RenderDepth(cmd, transform, 1.0f - SplatDownscaleFactor, RenderOrder);
+        }
+
+#if UNITY_6000_0_OR_NEWER
+        public void RenderColor(RasterCommandBuffer cmd)
+        {
+            m_renderer.RenderColor(cmd, transform, GammaToLinear, SHDegree, Brightness,
+                1.0f - SplatDownscaleFactor, RenderOrder);
+        }
+
+        public void RenderDepth(RasterCommandBuffer cmd)
+        {
+            m_renderer.RenderDepth(cmd, transform, 1.0f - SplatDownscaleFactor, RenderOrder);
+        }
+#endif
 
         /// <summary>Refreshes async-upload/range intersection immediately before centralized drawing.</summary>
         public void PrepareForSortAndDraw()

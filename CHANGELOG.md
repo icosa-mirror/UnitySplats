@@ -11,6 +11,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Added opt-in alpha-tested splat depth materials and project settings for Spark, uncompressed, and globally merged rendering. The default cutoff of `1.1` preserves color-only behavior.
 
+### Changed
+
+- Made Built-in, URP RenderGraph/compatibility, and HDRP splat draw ownership explicit so color renders once before optional depth writing and ordinary transparent content.
+
 ## [1.1.0] - 2026-07-22
 
 ### Added

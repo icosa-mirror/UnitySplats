@@ -68,6 +68,8 @@ Cross-renderer sorting is enabled by default. It globally depth-orders splats fr
 
 Optional splat depth writing is disabled by default. Set **Depth Prepass Alpha Cutoff** in `Project Settings > Gsplat` to a value from `0` through `1` to write an approximate alpha-tested splat surface into the camera depth buffer after splat color rendering. Values above `1` preserve color-only rendering. Lower thresholds occlude more later geometry but can make soft Gaussian edges behave like solid surfaces.
 
+Built-in, URP, and HDRP submit splat color before splat depth. In URP, both passes run before ordinary transparent rendering in RenderGraph and compatibility mode. A missing custom depth material disables depth writing for that material configuration without suppressing its ordinary color draw.
+
 ## Requirements
 
 - Unity 6000.0 or newer. The included development project uses Unity 6000.3.9f1.

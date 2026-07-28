@@ -68,5 +68,51 @@ namespace Gsplat.Tests
                 UnityEngine.Object.DestroyImmediate(settings);
             }
         }
+
+        [TestCase(0.01f, true)]
+        [TestCase(0.5f, true)]
+        [TestCase(1f, true)]
+        [TestCase(1.1f, false)]
+        [TestCase(-0.01f, false)]
+        public void DepthWritingUsesDocumentedCutoffRange(float cutoff, bool expected)
+        {
+            var settings = ScriptableObject.CreateInstance<GsplatSettings>();
+            try
+            {
+                settings.DepthPrepassAlphaCutoff = cutoff;
+                Assert.AreEqual(expected, settings.DepthWritingEnabled);
+            }
+            finally
+            {
+                UnityEngine.Object.DestroyImmediate(settings);
+            }
+        }
+
+        [TestCase("GsplatSpark.asset", "Gsplat/DepthOnly")]
+        [TestCase("GsplatUncompressed.asset", "Gsplat/DepthOnly")]
+        public void PerRendererDepthMaterialsAreWiredAndCached(string assetName, string shaderName)
+        {
+            var material = AssetDatabase.LoadAssetAtPath<GsplatMaterial>(
+                $"{GsplatUtils.k_PackagePath}Runtime/Materials/{assetName}");
+
+            Assert.IsNotNull(material);
+            Assert.IsNotNull(material.DefaultDepthMaterial);
+            Assert.AreEqual(shaderName, material.DefaultDepthMaterial.shader.name);
+            Assert.AreSame(material.DepthMaterials, material.DepthMaterials,
+                "Depth material variants must be cached rather than allocated per draw.");
+        }
+
+        [Test]
+        public void GlobalDepthMaterialIsWiredAndCached()
+        {
+            var material = AssetDatabase.LoadAssetAtPath<GsplatGlobalMaterial>(
+                $"{GsplatUtils.k_PackagePath}Runtime/Materials/GsplatGlobal.asset");
+
+            Assert.IsNotNull(material);
+            Assert.IsTrue(material.DepthValid());
+            Assert.AreEqual("Gsplat/GlobalDepthOnly", material.DefaultDepthMaterial.shader.name);
+            Assert.AreSame(material.DepthMaterials, material.DepthMaterials,
+                "Global depth material variants must be cached rather than allocated per draw.");
+        }
     }
 }

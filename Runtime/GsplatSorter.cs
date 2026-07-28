@@ -9,6 +9,9 @@ using System.Threading;
 using System.Threading.Tasks;
 using UnityEngine;
 using UnityEngine.Rendering;
+#if UNITY_6000_0_OR_NEWER
+using UnityEngine.Rendering.RenderGraphModule;
+#endif
 
 namespace Gsplat
 {
@@ -22,6 +25,12 @@ namespace Gsplat
         public bool ComputeSortRequired { get; }
         public void ComputeDepth(CommandBuffer cmd, Matrix4x4 matrixMv);
         public void Draw();
+        public void RenderColor(CommandBuffer cmd);
+        public void RenderDepth(CommandBuffer cmd);
+#if UNITY_6000_0_OR_NEWER
+        public void RenderColor(RasterCommandBuffer cmd);
+        public void RenderDepth(RasterCommandBuffer cmd);
+#endif
 
         // Used by GsplatSorter to populate the global packed buffer.
         public GsplatResource GsplatResource { get; }
@@ -603,13 +612,11 @@ namespace Gsplat
             if (!Valid || !GsplatSettings.Instance.Valid || !GatherGsplatsForCamera(camera))
                 return;
 
-            // Gather records the camera for the next player-loop CPU update. Never upload a
-            // GraphicsBuffer from this render callback.
-            if (CpuFallbackEnabled)
-                return;
-
             InitialClearCmdBuffer(camera);
-            DispatchSort(m_commandBuffer, camera);
+            if (GpuSortEnabled)
+                DispatchSort(m_commandBuffer, camera);
+            RenderColor(m_commandBuffer, camera);
+            RenderDepth(m_commandBuffer, camera);
         }
 
         public void DispatchSort(CommandBuffer cmd, Camera camera)
@@ -667,6 +674,85 @@ namespace Gsplat
                 m_globalRenderer.DispatchMerge(cmd, m_activeGsplats);
         }
 
+        public void RenderColor(CommandBuffer cmd, Camera camera)
+        {
+            if (GlobalRenderEnabled)
+            {
+                if (CameraRendersLayer(camera, m_globalRenderer.RenderLayer))
+                    m_globalRenderer.RenderColor(cmd);
+                return;
+            }
+
+            foreach (var gs in m_activeGsplats.OrderBy(GetRenderOrder))
+            {
+                if (CameraRenders(camera, gs))
+                    gs.RenderColor(cmd);
+            }
+        }
+
+        public void RenderDepth(CommandBuffer cmd, Camera camera)
+        {
+            if (GlobalRenderEnabled)
+            {
+                if (CameraRendersLayer(camera, m_globalRenderer.RenderLayer))
+                    m_globalRenderer.RenderDepth(cmd);
+                return;
+            }
+
+            foreach (var gs in m_activeGsplats.OrderBy(GetRenderOrder))
+            {
+                if (CameraRenders(camera, gs))
+                    gs.RenderDepth(cmd);
+            }
+        }
+
+#if UNITY_6000_0_OR_NEWER
+        public void RenderColor(RasterCommandBuffer cmd, Camera camera)
+        {
+            if (GlobalRenderEnabled)
+            {
+                if (CameraRendersLayer(camera, m_globalRenderer.RenderLayer))
+                    m_globalRenderer.RenderColor(cmd);
+                return;
+            }
+
+            foreach (var gs in m_activeGsplats.OrderBy(GetRenderOrder))
+            {
+                if (CameraRenders(camera, gs))
+                    gs.RenderColor(cmd);
+            }
+        }
+
+        public void RenderDepth(RasterCommandBuffer cmd, Camera camera)
+        {
+            if (GlobalRenderEnabled)
+            {
+                if (CameraRendersLayer(camera, m_globalRenderer.RenderLayer))
+                    m_globalRenderer.RenderDepth(cmd);
+                return;
+            }
+
+            foreach (var gs in m_activeGsplats.OrderBy(GetRenderOrder))
+            {
+                if (CameraRenders(camera, gs))
+                    gs.RenderDepth(cmd);
+            }
+        }
+#endif
+
+        static uint GetRenderOrder(IGsplat gsplat) =>
+            gsplat is GsplatRenderer renderer ? renderer.RenderOrder : 0;
+
+        static bool CameraRenders(Camera camera, IGsplat gsplat)
+        {
+            if (gsplat.RemainingCount == 0)
+                return false;
+            return CameraRendersLayer(camera, gsplat.transform.gameObject.layer);
+        }
+
+        static bool CameraRendersLayer(Camera camera, int layer) =>
+            !camera || (camera.cullingMask & (1 << layer)) != 0;
+
         // Called by GsplatPlayerLoopHook once per frame, before Unity's PostLateUpdate phase.
         // CPU sorting is scheduled and completed here, outside all camera render callbacks.
         public void Update()
@@ -681,7 +767,6 @@ namespace Gsplat
             {
                 DisableGlobalRendering();
                 UpdateCpuFallback();
-                DrawActiveIndividually();
                 return;
             }
 
@@ -707,7 +792,6 @@ namespace Gsplat
                 // global set instead of retaining it beside the resident per-file buffers.
                 m_globalRenderer.DisposeGlobalBuffers();
                 m_globalRenderer.MarkGlobalBuffersDirty();
-                DrawActiveIndividually();
             }
         }
 
@@ -716,12 +800,6 @@ namespace Gsplat
             GlobalRenderEnabled = false;
             m_globalRenderer.DisposeGlobalBuffers();
             m_globalRenderer.MarkGlobalBuffersDirty();
-        }
-
-        void DrawActiveIndividually()
-        {
-            foreach (var gs in m_activeGsplats)
-                gs.Draw();
         }
 
         void UpdateCpuFallback()

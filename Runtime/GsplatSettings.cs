@@ -101,6 +101,8 @@ namespace Gsplat
             "Alpha threshold for optional splat depth writing. Values from 0 through 1 enable depth writes; values above 1 disable them.")]
         [Range(0f, 1.1f)]
         public float DepthPrepassAlphaCutoff = 1.1f;
+        public bool DepthWritingEnabled =>
+            DepthPrepassAlphaCutoff is >= 0f and <= 1f;
         [Range(1, 20)] public uint MaxRenderOrder;
         public bool DisplayBoundingBoxes;
 
