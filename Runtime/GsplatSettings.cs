@@ -64,6 +64,12 @@ namespace Gsplat
                         changed = true;
                     }
 
+                    if (previousVersion < new Version("1.6.0"))
+                    {
+                        settings.IntersectionShader = DefaultIntersectionShader;
+                        changed = true;
+                    }
+
                     if (changed)
                     {
                         Debug.Log($"Updated GsplatSettings from version {previousVersion}.");
@@ -81,6 +87,8 @@ namespace Gsplat
         }
 
         public ComputeShader ComputeShader;
+        [Tooltip("Compute shader used by optional splat spatial queries.")]
+        public ComputeShader IntersectionShader;
         public GsplatGlobalMaterial GlobalMaterial;
 
         [Tooltip(
@@ -117,11 +125,14 @@ namespace Gsplat
         ComputeShader m_prevComputeShader;
         uint m_prevSplatInstanceSize;
 
-        [HideInInspector] [SerializeField] string m_version = "1.5.0";
+        [HideInInspector] [SerializeField] string m_version = "1.6.0";
 
 #if UNITY_EDITOR
         static ComputeShader DefaultComputeShader => AssetDatabase.LoadAssetAtPath<ComputeShader>(
             GsplatUtils.k_PackagePath + "Runtime/Shaders/Gsplat.compute");
+
+        static ComputeShader DefaultIntersectionShader => AssetDatabase.LoadAssetAtPath<ComputeShader>(
+            GsplatUtils.k_PackagePath + "Runtime/Shaders/GsplatIntersect.compute");
 
         static GsplatGlobalMaterial DefaultGlobalMaterial => AssetDatabase.LoadAssetAtPath<GsplatGlobalMaterial>(
             GsplatUtils.k_PackagePath + "Runtime/Materials/GsplatGlobal.asset");
@@ -145,6 +156,7 @@ namespace Gsplat
         {
             Version = GsplatUtils.k_SettingsVersion;
             ComputeShader = DefaultComputeShader;
+            IntersectionShader = DefaultIntersectionShader;
             GlobalMaterial = DefaultGlobalMaterial;
             Materials = DefaultMaterials;
             EnableGlobalSort = true;

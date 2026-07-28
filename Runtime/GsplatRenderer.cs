@@ -161,6 +161,27 @@ namespace Gsplat
 
         public void ComputeDepth(CommandBuffer cmd, Matrix4x4 matrixMv) => m_renderer.ComputeDepth(cmd, matrixMv);
 
+        /// <summary>
+        /// True when this renderer's current graphics path can execute splat spatial queries.
+        /// The CPU-sort and WebGL paths deliberately report false.
+        /// </summary>
+        public bool SupportsSpatialQueries => GsplatRendererImpl.SupportsSpatialQueries;
+
+        /// <summary>
+        /// Tests a world-space sphere against currently resident, active, visible splats.
+        /// This compatibility method performs a synchronous GPU readback and is intended for
+        /// bounded or occasional interaction queries. Hit score is 1; miss/unavailable is -1.
+        /// </summary>
+        public bool TryIntersectSphere(Vector3 centerWorld, float radiusWorld, out float score)
+        {
+            score = -1f;
+            if (!SupportsSpatialQueries || !Valid || m_renderer == null)
+                return false;
+
+            return m_renderer.TryIntersectSphere(transform, centerWorld, radiusWorld,
+                1.0f - SplatDownscaleFactor, out score);
+        }
+
         /// <summary>Refreshes async-upload/range intersection immediately before centralized drawing.</summary>
         public void PrepareForSortAndDraw()
         {

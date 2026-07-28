@@ -209,6 +209,20 @@ renderer.ClearActiveRanges();
 
 These methods update Unity GPU buffers and must run on the main thread. Compute cutouts are bypassed while explicit ranges are enabled.
 
+## Spatial queries
+
+`GsplatRenderer.TryIntersectSphere` tests a world-space sphere against the renderer's currently resident and active splats. The query respects partial uploads, active ranges, compute cutouts, renderer transforms, splat downscaling, and effectively transparent splats.
+
+```csharp
+if (renderer.SupportsSpatialQueries &&
+    renderer.TryIntersectSphere(centerWorld, radiusWorld, out float score))
+{
+    // Compatibility score semantics are binary: hit = 1, miss/unavailable = -1.
+}
+```
+
+The compatibility API performs a synchronous GPU readback. Use it for bounded or occasional interaction queries, not an unbounded per-frame scan. It reports `SupportsSpatialQueries == false` on WebGL, portable CPU-sort paths, missing compute support, or when the query shader is not configured.
+
 ## Format notes
 
 - PLY input must be binary little-endian.

@@ -53,5 +53,22 @@ namespace Gsplat.Tests
                 UnityEngine.Object.DestroyImmediate(settings);
             }
         }
+
+        [Test]
+        public void NewSettingsIncludeSpatialQueryShader()
+        {
+            var settings = ScriptableObject.CreateInstance<GsplatSettings>();
+            try
+            {
+                settings.Reset();
+                Assert.IsNotNull(settings.IntersectionShader);
+                Assert.IsTrue(settings.IntersectionShader.HasKernel("IntersectSpark"));
+                Assert.IsTrue(settings.IntersectionShader.HasKernel("IntersectUncompressed"));
+            }
+            finally
+            {
+                UnityEngine.Object.DestroyImmediate(settings);
+            }
+        }
     }
 }

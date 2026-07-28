@@ -1,0 +1,91 @@
+// Copyright (c) 2026 Yize Wu
+// SPDX-License-Identifier: MIT
+
+#pragma kernel IntersectSpark
+#pragma kernel IntersectUncompressed
+
+uint _SplatCount;
+float3 _SphereCenter;
+float _SphereRadius;
+float _ScaleFactor;
+float _MaxObjectScale;
+float4x4 _MATRIX_M;
+
+StructuredBuffer<uint4> _PackedSplatsBuffer;
+StructuredBuffer<float4> _PositionBuffer;
+StructuredBuffer<float4> _ScaleBuffer;
+StructuredBuffer<float4> _ColorBuffer;
+StructuredBuffer<uint> _OrderBuffer;
+RWStructuredBuffer<uint> _HitBuffer;
+
+static const float LN_SCALE_MIN = -12.0;
+static const float LN_SCALE_MAX = 9.0;
+static const float MIN_VISIBLE_ALPHA = 1.0 / 255.0;
+
+void UnpackSparkSplat(uint4 packedData, out float alpha, out float3 center, out float3 scale)
+{
+    uint word0 = packedData.x;
+    uint word1 = packedData.y;
+    uint word2 = packedData.z;
+    uint word3 = packedData.w;
+
+    alpha = float((word0 >> 24u) & 0xFFu) / 255.0;
+    center = float3(
+        f16tof32(word1 & 0xFFFFu),
+        f16tof32((word1 >> 16u) & 0xFFFFu),
+        f16tof32(word2 & 0xFFFFu));
+
+    uint3 encodedScale = uint3(
+        word3 & 0xFFu,
+        (word3 >> 8u) & 0xFFu,
+        (word3 >> 16u) & 0xFFu);
+    float scaleStep = (LN_SCALE_MAX - LN_SCALE_MIN) / 254.0;
+    scale = float3(
+        encodedScale.x == 0u ? 0.0 : exp(LN_SCALE_MIN + float(encodedScale.x - 1u) * scaleStep),
+        encodedScale.y == 0u ? 0.0 : exp(LN_SCALE_MIN + float(encodedScale.y - 1u) * scaleStep),
+        encodedScale.z == 0u ? 0.0 : exp(LN_SCALE_MIN + float(encodedScale.z - 1u) * scaleStep));
+}
+
+bool IntersectsSplatSphere(float3 center, float3 scale, float alpha)
+{
+    if (alpha <= MIN_VISIBLE_ALPHA)
+        return false;
+
+    center = mul(_MATRIX_M, float4(center, 1.0)).xyz;
+    float splatRadius = max(max(scale.x, scale.y), scale.z) *
+        _ScaleFactor * 2.0 * _MaxObjectScale;
+    float combinedRadius = _SphereRadius + splatRadius;
+    float3 offset = center - _SphereCenter;
+    return dot(offset, offset) <= combinedRadius * combinedRadius;
+}
+
+[numthreads(256, 1, 1)]
+void IntersectSpark(uint3 id : SV_DispatchThreadID)
+{
+    uint orderIndex = id.x;
+    if (orderIndex >= _SplatCount || _HitBuffer[0] != 0u)
+        return;
+
+    uint splatIndex = _OrderBuffer[orderIndex];
+    float alpha;
+    float3 center;
+    float3 scale;
+    UnpackSparkSplat(_PackedSplatsBuffer[splatIndex], alpha, center, scale);
+    if (IntersectsSplatSphere(center, scale, alpha))
+        InterlockedAdd(_HitBuffer[0], 1u);
+}
+
+[numthreads(256, 1, 1)]
+void IntersectUncompressed(uint3 id : SV_DispatchThreadID)
+{
+    uint orderIndex = id.x;
+    if (orderIndex >= _SplatCount || _HitBuffer[0] != 0u)
+        return;
+
+    uint splatIndex = _OrderBuffer[orderIndex];
+    if (IntersectsSplatSphere(
+            _PositionBuffer[splatIndex].xyz,
+            _ScaleBuffer[splatIndex].xyz,
+            _ColorBuffer[splatIndex].a))
+        InterlockedAdd(_HitBuffer[0], 1u);
+}

@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Added a world-space sphere spatial-query API with explicit capability reporting, reusable GPU buffers, broad-phase bounds rejection, active-range/cutout support, and binary compatibility scores.
+
 ## [1.1.0] - 2026-07-22
 
 ### Added

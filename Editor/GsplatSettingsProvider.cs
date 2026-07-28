@@ -25,6 +25,8 @@ namespace Gsplat.Editor
         {
             m_gsplatSettings.Update();
             EditorGUILayout.PropertyField(m_gsplatSettings.FindProperty(nameof(GsplatSettings.ComputeShader)));
+            EditorGUILayout.PropertyField(
+                m_gsplatSettings.FindProperty(nameof(GsplatSettings.IntersectionShader)));
             EditorGUILayout.PropertyField(m_gsplatSettings.FindProperty(nameof(GsplatSettings.SplatInstanceSize)));
             EditorGUILayout.PropertyField(m_gsplatSettings.FindProperty(nameof(GsplatSettings.UploadBatchSize)));
             EditorGUILayout.PropertyField(m_gsplatSettings.FindProperty(nameof(GsplatSettings.MaxRenderOrder)));

@@ -13,7 +13,7 @@ namespace Gsplat
     {
         public const string k_PackagePath = "Packages/com.arloopa.unitysplats/";
         public static readonly Version k_Version = new("1.1.0");
-        internal static readonly Version k_SettingsVersion = new("1.5.0");
+        internal static readonly Version k_SettingsVersion = new("1.6.0");
         public const string k_VertexTextureKeyword = "GSPLAT_VERTEX_TEXTURES";
         public const string k_VertexBufferKeyword = "GSPLAT_VERTEX_BUFFERS";
 
@@ -211,6 +211,11 @@ namespace Gsplat
 
         public static Bounds CalcWorldBounds(Bounds localBounds, Transform transform)
         {
+            return CalcWorldBounds(localBounds, transform.localToWorldMatrix);
+        }
+
+        public static Bounds CalcWorldBounds(Bounds localBounds, Matrix4x4 localToWorld)
+        {
             var localCenter = localBounds.center;
             var localExtents = localBounds.extents;
 
@@ -226,9 +231,9 @@ namespace Gsplat
                 localCenter + new Vector3(-localExtents.x, -localExtents.y, -localExtents.z)
             };
 
-            var worldBounds = new Bounds(transform.TransformPoint(localCorners[0]), Vector3.zero);
+            var worldBounds = new Bounds(localToWorld.MultiplyPoint3x4(localCorners[0]), Vector3.zero);
             for (var i = 1; i < 8; i++)
-                worldBounds.Encapsulate(transform.TransformPoint(localCorners[i]));
+                worldBounds.Encapsulate(localToWorld.MultiplyPoint3x4(localCorners[i]));
 
             return worldBounds;
         }
