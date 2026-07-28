@@ -64,7 +64,7 @@ The WebGL 2 path does not create compute or structured graphics buffers. It stor
 
 The GPU radix path requires wave/subgroup operations and compatible compute workgroup limits. The CPU fallback retains instanced GPU drawing, but disables global multi-renderer merge and compute cutouts. It keeps one sort order per renderer and prioritizes a game camera, so substantially different simultaneous camera viewpoints share that order.
 
-Cross-renderer sorting is enabled by default. It globally depth-orders splats from overlapping renderers and draws them as one merged scene when all active renderers are fully uploaded, Spark-packed, use the same GameObject layer, keep the default render order, and fit the packed renderer/index limits. Configure it from `Project Settings > Gsplat`. Other configurations fall back to separate draw calls.
+Cross-renderer sorting is enabled by default. It globally depth-orders splats from overlapping renderers and draws them as one merged scene when all participating renderers are fully uploaded, Spark-packed, use the same GameObject layer, keep the default render order, and fit the packed renderer/index limits. Configure the scene-wide setting from `Project Settings > Gsplat`. Disable **Participate In Global Sort** on an individual `GsplatRenderer` when an isolated preview, portal, or compositor must keep its own draw; that renderer remains visible and independently sorted without blocking compatible world renderers from merging. Other incompatible participating configurations fall back to separate draw calls.
 
 ## Requirements
 

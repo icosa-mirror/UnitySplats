@@ -25,12 +25,17 @@ namespace Gsplat.Editor
                 nameof(GsplatRenderer.AsyncUpload),
                 nameof(GsplatRenderer.RenderBeforeUploadComplete),
                 nameof(GsplatRenderer.Brightness),
-                nameof(GsplatRenderer.SortMode)
+                nameof(GsplatRenderer.SortMode),
+                "m_participateInGlobalSort"
             );
 
             DrawShDegree(rendererTargets);
             DrawBrightness();
             DrawSortingControls(rendererTargets);
+            EditorGUILayout.PropertyField(
+                serializedObject.FindProperty("m_participateInGlobalSort"),
+                new GUIContent("Participate In Global Sort",
+                    "Allows this renderer to join compatible renderers in one cross-renderer depth sort. Disable for isolated previews or other renderers that must keep an independent draw."));
             DrawUploadControls();
             DrawColliderControls(rendererTargets);
 

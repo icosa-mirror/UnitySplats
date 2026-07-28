@@ -55,6 +55,29 @@ namespace Gsplat
             "Renders the uploaded portion while an asynchronous upload is still running. Disable to keep the renderer hidden until the complete asset is resident.")]
         public bool RenderBeforeUploadComplete = true;
 
+        [SerializeField]
+        [Tooltip(
+            "Allows this renderer to join compatible renderers in one cross-renderer depth sort. Disable for isolated previews or other renderers that must keep an independent draw.")]
+        bool m_participateInGlobalSort = true;
+
+        /// <summary>
+        /// Whether this renderer can participate in the scene-wide merged depth sort.
+        /// Non-participating renderers remain active, sorted, and drawn independently.
+        /// </summary>
+        public bool ParticipateInGlobalSort
+        {
+            get => m_participateInGlobalSort;
+            set
+            {
+                if (m_participateInGlobalSort == value)
+                    return;
+
+                m_participateInGlobalSort = value;
+                if (isActiveAndEnabled)
+                    GsplatSorter.Instance.MarkGlobalBuffersDirty();
+            }
+        }
+
         [Tooltip(
             "Recalculates the renderer bounds after compute cutouts so Unity can cull the surviving splats more tightly. This is costly when cutouts move frequently.")]
         public bool CutoutsUpdateBounds = true;
@@ -347,6 +370,7 @@ namespace Gsplat
             }
 
             ForceRefresh();
+            GsplatSorter.Instance.MarkGlobalBuffersDirty();
 #if UNITY_EDITOR
             // Keep an attached collider aligned when the selected splat asset changes or is
             // reimported. The custom inspector also handles the moment a BoxCollider is added.
