@@ -112,7 +112,8 @@ namespace Gsplat
                 !IsFinite(centerWorld) || !float.IsFinite(radiusWorld) ||
                 !float.IsFinite(scaleFactor) || scaleFactor < 0f ||
                 !m_gsplatAsset || GsplatResource is not { Disposed: false, UploadedCount: > 0 } ||
-                m_remainingCount == 0 || OrderBuffer == null)
+                m_remainingCount == 0 || OrderBuffer == null ||
+                SorterResource is not { Initialized: true })
                 return false;
 
             var localToWorld = transform.localToWorldMatrix;
