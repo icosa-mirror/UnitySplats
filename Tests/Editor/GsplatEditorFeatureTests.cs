@@ -69,6 +69,23 @@ namespace Gsplat.Tests
             }
         }
 
+        [Test]
+        public void NewSettingsIncludeSpatialQueryShader()
+        {
+            var settings = ScriptableObject.CreateInstance<GsplatSettings>();
+            try
+            {
+                settings.Reset();
+                Assert.IsNotNull(settings.IntersectionShader);
+                Assert.IsTrue(settings.IntersectionShader.HasKernel("IntersectSpark"));
+                Assert.IsTrue(settings.IntersectionShader.HasKernel("IntersectUncompressed"));
+            }
+            finally
+            {
+                UnityEngine.Object.DestroyImmediate(settings);
+            }
+        }
+
         [TestCase(0.01f, true)]
         [TestCase(0.5f, true)]
         [TestCase(1f, true)]

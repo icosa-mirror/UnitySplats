@@ -69,6 +69,7 @@ namespace Gsplat
                         // Depth writing is opt-in. Existing projects must retain the package's
                         // previous color-only behavior until they choose a cutoff explicitly.
                         settings.DepthPrepassAlphaCutoff = 1.1f;
+                        settings.IntersectionShader = DefaultIntersectionShader;
                         changed = true;
                     }
 
@@ -89,6 +90,8 @@ namespace Gsplat
         }
 
         public ComputeShader ComputeShader;
+        [Tooltip("Compute shader used by optional splat spatial queries.")]
+        public ComputeShader IntersectionShader;
         public GsplatGlobalMaterial GlobalMaterial;
 
         [Tooltip(
@@ -137,6 +140,9 @@ namespace Gsplat
         static ComputeShader DefaultComputeShader => AssetDatabase.LoadAssetAtPath<ComputeShader>(
             GsplatUtils.k_PackagePath + "Runtime/Shaders/Gsplat.compute");
 
+        static ComputeShader DefaultIntersectionShader => AssetDatabase.LoadAssetAtPath<ComputeShader>(
+            GsplatUtils.k_PackagePath + "Runtime/Shaders/GsplatIntersect.compute");
+
         static GsplatGlobalMaterial DefaultGlobalMaterial => AssetDatabase.LoadAssetAtPath<GsplatGlobalMaterial>(
             GsplatUtils.k_PackagePath + "Runtime/Materials/GsplatGlobal.asset");
 
@@ -159,6 +165,7 @@ namespace Gsplat
         {
             Version = GsplatUtils.k_SettingsVersion;
             ComputeShader = DefaultComputeShader;
+            IntersectionShader = DefaultIntersectionShader;
             GlobalMaterial = DefaultGlobalMaterial;
             Materials = DefaultMaterials;
             EnableGlobalSort = true;

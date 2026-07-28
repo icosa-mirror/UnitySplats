@@ -31,8 +31,15 @@ namespace Gsplat
         public GraphicsBuffer OrderSizeBuffer { get; private set; }
         public GraphicsBuffer BoundsBuffer { get; private set; }
         public ISorterResource SorterResource { get; private set; }
+        GraphicsBuffer m_intersectionHitBuffer;
+        readonly uint[] m_intersectionHit = new uint[1];
+        float m_maxLocalSplatRadius;
 
         static readonly int k_orderBuffer = Shader.PropertyToID("_OrderBuffer");
+        static readonly int k_packedSplatsBuffer = Shader.PropertyToID("_PackedSplatsBuffer");
+        static readonly int k_positionBuffer = Shader.PropertyToID("_PositionBuffer");
+        static readonly int k_scaleBuffer = Shader.PropertyToID("_ScaleBuffer");
+        static readonly int k_colorBuffer = Shader.PropertyToID("_ColorBuffer");
         static readonly int k_orderTexture = Shader.PropertyToID("_OrderTexture");
         static readonly int k_gsplatTextureWidth = Shader.PropertyToID("_GsplatTextureWidth");
         static readonly int k_matrixM = Shader.PropertyToID("_MATRIX_M");
@@ -44,6 +51,10 @@ namespace Gsplat
         static readonly int k_scaleFactor = Shader.PropertyToID("_ScaleFactor");
         static readonly int k_antialiased = Shader.PropertyToID("_Antialiased");
         static readonly int k_depthPrepassAlphaCutoff = Shader.PropertyToID("_DepthPrepassAlphaCutoff");
+        static readonly int k_sphereCenter = Shader.PropertyToID("_SphereCenter");
+        static readonly int k_sphereRadius = Shader.PropertyToID("_SphereRadius");
+        static readonly int k_maxObjectScale = Shader.PropertyToID("_MaxObjectScale");
+        static readonly int k_hitBuffer = Shader.PropertyToID("_HitBuffer");
 
         uint m_framesBeforeRecomputeSort = 0;
         uint m_sortsBeforeRecomputeCutouts = 0;
@@ -75,6 +86,110 @@ namespace Gsplat
 
         public void ComputeDepth(CommandBuffer cmd, Matrix4x4 matrixMv) =>
             m_gsplatAsset.ComputeDepth(cmd, matrixMv, m_remainingCount, SorterResource, GsplatResource);
+
+        public static bool SupportsSpatialQueries
+        {
+            get
+            {
+#if UNITY_WEBGL && !UNITY_EDITOR
+                return false;
+#else
+                var shader = GsplatSettings.Instance.IntersectionShader;
+                return SystemInfo.supportsComputeShaders &&
+                       GsplatSorter.Instance.GpuSortEnabled &&
+                       shader &&
+                       shader.HasKernel("IntersectSpark") &&
+                       shader.HasKernel("IntersectUncompressed");
+#endif
+            }
+        }
+
+        public bool TryIntersectSphere(Transform transform, Vector3 centerWorld, float radiusWorld,
+            float scaleFactor, out float score)
+        {
+            score = -1f;
+            if (!SupportsSpatialQueries || !transform || radiusWorld < 0f ||
+                !IsFinite(centerWorld) || !float.IsFinite(radiusWorld) ||
+                !float.IsFinite(scaleFactor) || scaleFactor < 0f ||
+                !m_gsplatAsset || GsplatResource is not { Disposed: false, UploadedCount: > 0 } ||
+                m_remainingCount == 0 || OrderBuffer == null)
+                return false;
+
+            var localToWorld = transform.localToWorldMatrix;
+            float maxObjectScale = MaxObjectScale(localToWorld);
+            if (!SphereOverlapsRendererBounds(m_bounds, localToWorld, m_maxLocalSplatRadius,
+                    scaleFactor, centerWorld, radiusWorld, maxObjectScale))
+                return false;
+
+            var shader = GsplatSettings.Instance.IntersectionShader;
+            int kernel;
+            switch (GsplatResource)
+            {
+                case GsplatResourceSpark spark when spark.PackedSplatsBuffer != null:
+                    kernel = shader.FindKernel("IntersectSpark");
+                    shader.SetBuffer(kernel, k_packedSplatsBuffer, spark.PackedSplatsBuffer);
+                    break;
+                case GsplatResourceUncompressed uncompressed
+                    when uncompressed.PositionBuffer != null &&
+                         uncompressed.ScaleBuffer != null &&
+                         uncompressed.ColorBuffer != null:
+                    kernel = shader.FindKernel("IntersectUncompressed");
+                    shader.SetBuffer(kernel, k_positionBuffer, uncompressed.PositionBuffer);
+                    shader.SetBuffer(kernel, k_scaleBuffer, uncompressed.ScaleBuffer);
+                    shader.SetBuffer(kernel, k_colorBuffer, uncompressed.ColorBuffer);
+                    break;
+                default:
+                    return false;
+            }
+
+            EnsureIntersectionBuffer();
+            m_intersectionHit[0] = 0;
+            m_intersectionHitBuffer.SetData(m_intersectionHit);
+            shader.SetInt(k_splatCount, (int)m_remainingCount);
+            shader.SetVector(k_sphereCenter, centerWorld);
+            shader.SetFloat(k_sphereRadius, radiusWorld);
+            shader.SetFloat(k_scaleFactor, scaleFactor);
+            shader.SetFloat(k_maxObjectScale, maxObjectScale);
+            shader.SetMatrix(k_matrixM, localToWorld);
+            shader.SetBuffer(kernel, k_orderBuffer, OrderBuffer);
+            shader.SetBuffer(kernel, k_hitBuffer, m_intersectionHitBuffer);
+            shader.Dispatch(kernel, (int)GsplatUtils.DivRoundUp(m_remainingCount, 256), 1, 1);
+            m_intersectionHitBuffer.GetData(m_intersectionHit);
+
+            if (m_intersectionHit[0] == 0)
+                return false;
+            score = 1f;
+            return true;
+        }
+
+        static bool SphereOverlapsRendererBounds(Bounds localBounds, Matrix4x4 localToWorld,
+            float maxLocalSplatRadius, float scaleFactor, Vector3 centerWorld, float radiusWorld,
+            float maxObjectScale)
+        {
+            var worldBounds = GsplatUtils.CalcWorldBounds(localBounds, localToWorld);
+            float splatRadius = maxLocalSplatRadius * scaleFactor * maxObjectScale;
+            worldBounds.Expand(splatRadius * 2f);
+            return worldBounds.SqrDistance(centerWorld) <= radiusWorld * radiusWorld;
+        }
+
+        static float MaxObjectScale(Matrix4x4 localToWorld) =>
+            Mathf.Max(
+                localToWorld.MultiplyVector(Vector3.right).magnitude,
+                Mathf.Max(
+                    localToWorld.MultiplyVector(Vector3.up).magnitude,
+                    localToWorld.MultiplyVector(Vector3.forward).magnitude));
+
+        static bool IsFinite(Vector3 value) =>
+            float.IsFinite(value.x) && float.IsFinite(value.y) && float.IsFinite(value.z);
+
+        void EnsureIntersectionBuffer()
+        {
+            m_intersectionHitBuffer ??= new GraphicsBuffer(
+                GraphicsBuffer.Target.Structured, 1, sizeof(uint))
+            {
+                name = "Gsplat.SpatialQueryHit"
+            };
+        }
 
         public void SetActiveSourceIds(uint[] sourceIds)
         {
@@ -213,6 +328,7 @@ namespace Gsplat
             ForceRefresh();
 
             m_gsplatAsset = gsplatAsset;
+            m_maxLocalSplatRadius = CalculateMaxLocalSplatRadius(gsplatAsset);
             GsplatResource = GsplatResourceManager.Get(gsplatAsset);
             gsplatAsset.SetupMaterialPropertyBlock(m_propertyBlock, GsplatResource);
             if (asyncUpload)
@@ -255,6 +371,39 @@ namespace Gsplat
             GsplatResourceManager.Release(m_gsplatAsset);
             GsplatResource = null;
             m_gsplatAsset = null;
+            m_maxLocalSplatRadius = 0f;
+        }
+
+        static float CalculateMaxLocalSplatRadius(GsplatAsset asset)
+        {
+            float maxScale = 0f;
+            if (asset is GsplatAssetUncompressed { Scales: { } scales })
+            {
+                foreach (var scale in scales)
+                    maxScale = Mathf.Max(maxScale,
+                        Mathf.Max(scale.x, Mathf.Max(scale.y, scale.z)));
+            }
+            else if (asset is GsplatAssetSpark { PackedSplats: { } packedSplats })
+            {
+                const float minLogScale = -12f;
+                const float logScaleStep = 21f / 254f;
+                foreach (var packed in packedSplats)
+                {
+                    uint word = packed.w;
+                    for (var axis = 0; axis < 3; ++axis)
+                    {
+                        uint encoded = (word >> (axis * 8)) & 0xffu;
+                        if (encoded == 0)
+                            continue;
+                        maxScale = Mathf.Max(maxScale,
+                            Mathf.Exp(minLogScale + (encoded - 1u) * logScaleStep));
+                    }
+                }
+            }
+
+            // The intersection shader models each Gaussian with a sphere at twice its
+            // largest axis scale, matching the previous compatibility behavior.
+            return maxScale * 2f;
         }
 
         /// <summary>
@@ -345,6 +494,8 @@ namespace Gsplat
             OrderSizeBuffer = null;
             BoundsBuffer?.Dispose();
             BoundsBuffer = null;
+            m_intersectionHitBuffer?.Dispose();
+            m_intersectionHitBuffer = null;
         }
 
         public void ForceRefresh()
