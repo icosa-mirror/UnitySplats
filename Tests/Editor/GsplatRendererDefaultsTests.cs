@@ -90,6 +90,16 @@ namespace Gsplat.Tests
         [Test]
         public void NonParticipantIsIndependentWithoutBlockingOtherParticipants()
         {
+            var sorter = GsplatSorter.Instance;
+            var active = (IList)typeof(GsplatSorter).GetField("m_activeGsplats",
+                BindingFlags.Instance | BindingFlags.NonPublic).GetValue(sorter);
+            var global = (IList)typeof(GsplatSorter).GetField("m_globalGsplats",
+                BindingFlags.Instance | BindingFlags.NonPublic).GetValue(sorter);
+            var independent = (IList)typeof(GsplatSorter).GetField("m_independentGsplats",
+                BindingFlags.Instance | BindingFlags.NonPublic).GetValue(sorter);
+            var previousActive = Snapshot(active);
+            var previousGlobal = Snapshot(global);
+            var previousIndependent = Snapshot(independent);
             var gameObjects = new[]
             {
                 new GameObject("GsplatRenderer global-sort participant A"),
@@ -103,9 +113,6 @@ namespace Gsplat.Tests
                 var preview = gameObjects[2].AddComponent<GsplatRenderer>();
                 preview.ParticipateInGlobalSort = false;
 
-                var sorter = GsplatSorter.Instance;
-                var active = (IList)typeof(GsplatSorter).GetField("m_activeGsplats",
-                    BindingFlags.Instance | BindingFlags.NonPublic).GetValue(sorter);
                 active.Clear();
                 active.Add(first);
                 active.Add(second);
@@ -114,18 +121,31 @@ namespace Gsplat.Tests
                         BindingFlags.Instance | BindingFlags.NonPublic)
                     .Invoke(sorter, null);
 
-                var global = (IList)typeof(GsplatSorter).GetField("m_globalGsplats",
-                    BindingFlags.Instance | BindingFlags.NonPublic).GetValue(sorter);
-                var independent = (IList)typeof(GsplatSorter).GetField("m_independentGsplats",
-                    BindingFlags.Instance | BindingFlags.NonPublic).GetValue(sorter);
                 CollectionAssert.AreEquivalent(new[] { first, second }, global);
                 CollectionAssert.AreEqual(new[] { preview }, independent);
             }
             finally
             {
+                Restore(active, previousActive);
+                Restore(global, previousGlobal);
+                Restore(independent, previousIndependent);
                 foreach (var gameObject in gameObjects)
                     Object.DestroyImmediate(gameObject);
             }
+        }
+
+        static object[] Snapshot(IList list)
+        {
+            var snapshot = new object[list.Count];
+            list.CopyTo(snapshot, 0);
+            return snapshot;
+        }
+
+        static void Restore(IList list, object[] snapshot)
+        {
+            list.Clear();
+            foreach (var item in snapshot)
+                list.Add(item);
         }
 
         [Test]
