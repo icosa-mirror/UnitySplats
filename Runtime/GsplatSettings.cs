@@ -64,16 +64,17 @@ namespace Gsplat
                         changed = true;
                     }
 
-                    if (previousVersion < new Version("1.6.0"))
+                    // A package without this field deserializes it as zero, which would
+                    // unexpectedly enable depth writing. Use serialized field presence instead
+                    // of only the schema number so independently merged features cannot mask
+                    // this migration. Compatible forks with an explicit cutoff keep their value.
+                    string assetPath = AssetDatabase.GetAssetPath(settings);
+                    bool hadSerializedCutoff = !string.IsNullOrEmpty(assetPath) &&
+                        File.Exists(assetPath) &&
+                        File.ReadAllText(assetPath).Contains(
+                            $"{nameof(DepthPrepassAlphaCutoff)}:");
+                    if (previousVersion < new Version("1.6.0") || !hadSerializedCutoff)
                     {
-                        // A package without this field deserializes it as zero, which would
-                        // unexpectedly enable depth writing. Preserve an explicitly serialized
-                        // cutoff from compatible forks, but keep base-package upgrades color-only.
-                        string assetPath = AssetDatabase.GetAssetPath(settings);
-                        bool hadSerializedCutoff = !string.IsNullOrEmpty(assetPath) &&
-                            File.Exists(assetPath) &&
-                            File.ReadAllText(assetPath).Contains(
-                                $"{nameof(DepthPrepassAlphaCutoff)}:");
                         if (!hadSerializedCutoff)
                             settings.DepthPrepassAlphaCutoff = 1.1f;
                         changed = true;
