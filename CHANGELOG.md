@@ -17,6 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Made Built-in, URP RenderGraph/compatibility, and HDRP splat draw ownership explicit so color renders once before optional depth writing and ordinary transparent content.
 - Preserved explicitly serialized depth cutoffs when migrating settings assets from compatible package forks.
+- Made spatial-query shader migration independent of other settings-schema feature merges.
 
 ## [1.1.0] - 2026-07-22
 

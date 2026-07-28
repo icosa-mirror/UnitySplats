@@ -80,7 +80,9 @@ namespace Gsplat
                         changed = true;
                     }
 
-                    if (previousVersion < new Version("1.7.0"))
+                    // Check the field as well as the schema so another independently merged
+                    // settings feature cannot prevent the query shader from being populated.
+                    if (previousVersion < new Version("1.7.0") || !settings.IntersectionShader)
                     {
                         if (!settings.IntersectionShader)
                             settings.IntersectionShader = DefaultIntersectionShader;
