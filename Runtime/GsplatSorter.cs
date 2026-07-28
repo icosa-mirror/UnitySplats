@@ -379,6 +379,8 @@ namespace Gsplat
         readonly HashSet<IGsplat> m_gsplats = new();
         readonly HashSet<Camera> m_camerasInjected = new();
         readonly List<IGsplat> m_activeGsplats = new();
+        readonly List<IGsplat> m_globalGsplats = new();
+        readonly List<IGsplat> m_independentGsplats = new();
         readonly HashSet<UnityEngine.Object> m_warnedUncompressed = new();
         readonly HashSet<UnityEngine.Object> m_warnedGlobalIndexLimit = new();
         readonly HashSet<UnityEngine.Object> m_warnedGlobalLayer = new();
@@ -473,6 +475,8 @@ namespace Gsplat
             }
 
             m_activeGsplats.Clear();
+            m_globalGsplats.Clear();
+            m_independentGsplats.Clear();
             m_cpuSortCamera = null;
             m_commandBuffer?.Dispose();
             m_commandBuffer = null;
@@ -500,18 +504,18 @@ namespace Gsplat
         bool CanRenderGlobally()
         {
             // renderer_id is packed into 8 bits ([31:24]); max 255 renderers.
-            if (m_activeGsplats.Count > 255)
+            if (m_globalGsplats.Count > 255)
             {
                 Debug.LogError(
                     "[GsplatSorter] Global merge supports at most 255 renderers. Falling back to per-renderer rendering.");
                 return false;
             }
 
-            var commonLayer = (m_activeGsplats[0] as Component)?.gameObject.layer ?? 0;
+            var commonLayer = (m_globalGsplats[0] as Component)?.gameObject.layer ?? 0;
             ulong totalSplatCount = 0;
 
-            // Global merge requires every active renderer to use SPARK compression.
-            foreach (var gs in m_activeGsplats)
+            // Global merge requires every participating renderer to use SPARK compression.
+            foreach (var gs in m_globalGsplats)
             {
                 var obj = gs as UnityEngine.Object;
                 // Keep drawing streaming assets independently until their full GPU buffers
@@ -525,7 +529,7 @@ namespace Gsplat
                 {
                     if (m_warnedUncompressed.Add(obj))
                         Debug.LogWarning(
-                            $"[GsplatSorter] '{obj?.name}' uses an uncompressed asset; global sort requires every active renderer to use SPARK compression. Disabling global sort for this scene — all renderers fall back to per-renderer rendering.");
+                            $"[GsplatSorter] '{obj?.name}' uses an uncompressed asset; global sort requires every participating renderer to use SPARK compression. Participating renderers will fall back to per-renderer rendering.");
                     return false;
                 }
 
@@ -664,7 +668,7 @@ namespace Gsplat
 
             // --- Global K-way merge ---
             if (GlobalRenderEnabled)
-                m_globalRenderer.DispatchMerge(cmd, m_activeGsplats);
+                m_globalRenderer.DispatchMerge(cmd, m_globalGsplats);
         }
 
         // Called by GsplatPlayerLoopHook once per frame, before Unity's PostLateUpdate phase.
@@ -696,10 +700,14 @@ namespace Gsplat
                     m_activeGsplats.Add(gs);
             }
 
+            PartitionGlobalSortGsplats();
             GlobalRenderEnabled = m_globalRenderer.Valid && GsplatSettings.Instance.EnableGlobalSort &&
-                                  m_activeGsplats.Count >= 2 && CanRenderGlobally();
+                                  m_globalGsplats.Count >= 2 && CanRenderGlobally();
             if (GlobalRenderEnabled)
-                m_globalRenderer.Update(m_activeGsplats);
+            {
+                m_globalRenderer.Update(m_globalGsplats);
+                DrawIndependently();
+            }
             else
             {
                 // A previous multi-renderer merge duplicates the complete packed/SH/order
@@ -721,6 +729,25 @@ namespace Gsplat
         void DrawActiveIndividually()
         {
             foreach (var gs in m_activeGsplats)
+                gs.Draw();
+        }
+
+        void PartitionGlobalSortGsplats()
+        {
+            m_globalGsplats.Clear();
+            m_independentGsplats.Clear();
+            foreach (var gs in m_activeGsplats)
+            {
+                if (gs is GsplatRenderer { ParticipateInGlobalSort: false })
+                    m_independentGsplats.Add(gs);
+                else
+                    m_globalGsplats.Add(gs);
+            }
+        }
+
+        void DrawIndependently()
+        {
+            foreach (var gs in m_independentGsplats)
                 gs.Draw();
         }
 
