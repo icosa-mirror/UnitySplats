@@ -53,5 +53,20 @@ namespace Gsplat.Tests
                 UnityEngine.Object.DestroyImmediate(settings);
             }
         }
+
+        [Test]
+        public void NewSettingsDisableDepthWriting()
+        {
+            var settings = ScriptableObject.CreateInstance<GsplatSettings>();
+            try
+            {
+                Assert.AreEqual(1.1f, settings.DepthPrepassAlphaCutoff);
+                Assert.Greater(settings.DepthPrepassAlphaCutoff, 1f);
+            }
+            finally
+            {
+                UnityEngine.Object.DestroyImmediate(settings);
+            }
+        }
     }
 }

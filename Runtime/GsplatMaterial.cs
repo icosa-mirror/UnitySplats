@@ -9,11 +9,14 @@ namespace Gsplat
     public class GsplatMaterial : ScriptableObject
     {
         public Material DefaultMaterial;
+        public Material DefaultDepthMaterial;
         private Material[][] m_material;
+        private Material[][] m_depthMaterial;
 
         public void Reset()
         {
             m_material = null;
+            m_depthMaterial = null;
         }
 
         public Material[][] Materials // materials generated with SH bands from 0 to 4 and custom renderOrders
@@ -51,6 +54,52 @@ namespace Gsplat
                 }
                 return m_material;
             }
+        }
+
+        public Material[][] DepthMaterials
+        {
+            get
+            {
+                if (!DefaultDepthMaterial)
+                    return null;
+                if (m_depthMaterial != null && m_depthMaterial[0][0] != null)
+                    return m_depthMaterial;
+
+                m_depthMaterial = CreateMaterialVariants(DefaultDepthMaterial);
+                return m_depthMaterial;
+            }
+        }
+
+        Material[][] CreateMaterialVariants(Material source)
+        {
+            var variants = new Material[5][];
+            for (var i = 0; i < 5; ++i)
+            {
+                variants[i] = new Material[GsplatSettings.Instance.MaxRenderOrder];
+                for (var j = 0; j < GsplatSettings.Instance.MaxRenderOrder; ++j)
+                {
+                    variants[i][j] = new Material(source);
+                    variants[i][j].DisableKeyword("SH_BANDS_0");
+                    variants[i][j].DisableKeyword("SH_BANDS_1");
+                    variants[i][j].DisableKeyword("SH_BANDS_2");
+                    variants[i][j].DisableKeyword("SH_BANDS_3");
+                    variants[i][j].DisableKeyword("SH_BANDS_4");
+                    variants[i][j].EnableKeyword($"SH_BANDS_{i}");
+                    if (GsplatUtils.UseVertexDataTextures)
+                    {
+                        variants[i][j].EnableKeyword(GsplatUtils.k_VertexTextureKeyword);
+                        variants[i][j].DisableKeyword(GsplatUtils.k_VertexBufferKeyword);
+                    }
+                    else
+                    {
+                        variants[i][j].DisableKeyword(GsplatUtils.k_VertexTextureKeyword);
+                        variants[i][j].EnableKeyword(GsplatUtils.k_VertexBufferKeyword);
+                    }
+                    variants[i][j].renderQueue = 3000 + j;
+                }
+            }
+
+            return variants;
         }
 
         public ComputeShader CalcDepthShader;

@@ -64,6 +64,14 @@ namespace Gsplat
                         changed = true;
                     }
 
+                    if (previousVersion < new Version("1.6.0"))
+                    {
+                        // Depth writing is opt-in. Existing projects must retain the package's
+                        // previous color-only behavior until they choose a cutoff explicitly.
+                        settings.DepthPrepassAlphaCutoff = 1.1f;
+                        changed = true;
+                    }
+
                     if (changed)
                     {
                         Debug.Log($"Updated GsplatSettings from version {previousVersion}.");
@@ -89,6 +97,10 @@ namespace Gsplat
 
         public uint SplatInstanceSize;
         public uint UploadBatchSize;
+        [Tooltip(
+            "Alpha threshold for optional splat depth writing. Values from 0 through 1 enable depth writes; values above 1 disable them.")]
+        [Range(0f, 1.1f)]
+        public float DepthPrepassAlphaCutoff = 1.1f;
         [Range(1, 20)] public uint MaxRenderOrder;
         public bool DisplayBoundingBoxes;
 
@@ -117,7 +129,7 @@ namespace Gsplat
         ComputeShader m_prevComputeShader;
         uint m_prevSplatInstanceSize;
 
-        [HideInInspector] [SerializeField] string m_version = "1.5.0";
+        [HideInInspector] [SerializeField] string m_version = "1.6.0";
 
 #if UNITY_EDITOR
         static ComputeShader DefaultComputeShader => AssetDatabase.LoadAssetAtPath<ComputeShader>(
@@ -150,6 +162,7 @@ namespace Gsplat
             EnableGlobalSort = true;
             SplatInstanceSize = 128;
             UploadBatchSize = 100000;
+            DepthPrepassAlphaCutoff = 1.1f;
             MaxRenderOrder = 1;
             DisplayBoundingBoxes = false;
             CameraTranslationRefreshTreshold = 0.2f;

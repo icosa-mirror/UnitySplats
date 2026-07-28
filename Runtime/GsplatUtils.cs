@@ -13,7 +13,7 @@ namespace Gsplat
     {
         public const string k_PackagePath = "Packages/com.arloopa.unitysplats/";
         public static readonly Version k_Version = new("1.1.0");
-        internal static readonly Version k_SettingsVersion = new("1.5.0");
+        internal static readonly Version k_SettingsVersion = new("1.6.0");
         public const string k_VertexTextureKeyword = "GSPLAT_VERTEX_TEXTURES";
         public const string k_VertexBufferKeyword = "GSPLAT_VERTEX_BUFFERS";
 

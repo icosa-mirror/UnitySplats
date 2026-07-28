@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Added opt-in alpha-tested splat depth materials and project settings for Spark, uncompressed, and globally merged rendering. The default cutoff of `1.1` preserves color-only behavior.
+
 ## [1.1.0] - 2026-07-22
 
 ### Added
