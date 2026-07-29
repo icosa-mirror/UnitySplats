@@ -2,9 +2,11 @@
 // SPDX-License-Identifier: MIT
 
 using System;
+using System.Buffers.Binary;
 using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
+using System.Runtime.InteropServices;
 using System.Text;
 using UnityEngine;
 
@@ -103,6 +105,159 @@ namespace Gsplat
             }
         }
 
+        /// <summary>
+        /// Streams a PLY directly into Spark buffers. Standard PLY records are decoded,
+        /// validated, transformed, and packed in one pass. Compressed PlayCanvas PLY uses
+        /// the canonical decoder until it has an equivalent streaming implementation.
+        /// </summary>
+        internal static void ReadIntoSpark(
+            Stream stream,
+            GsplatAssetSpark asset,
+            SourceCoordinates sourceCoordinates = SourceCoordinates.RUB,
+            ProgressCallback progress = null)
+        {
+            if (stream == null)
+                throw new ArgumentNullException(nameof(stream));
+            if (asset == null)
+                throw new ArgumentNullException(nameof(asset));
+            if (!stream.CanRead)
+                throw new ArgumentException("The PLY stream must be readable.", nameof(stream));
+            if (!Enum.IsDefined(typeof(SourceCoordinates), sourceCoordinates))
+                throw new ArgumentOutOfRangeException(nameof(sourceCoordinates));
+
+            progress?.Invoke("Reading PLY header", 0f);
+            PlyHeader header = ReadHeader(stream);
+            if (stream.CanSeek && stream.Length - stream.Position < header.DataByteCount)
+                throw new InvalidDataException(
+                    $"PLY payload is truncated: expected {header.DataByteCount} bytes but only " +
+                    $"{stream.Length - stream.Position} remain.");
+
+            var reporter = new ProgressReporter(progress, header.DataByteCount);
+            using var input = new PlyBinaryReader(stream);
+            if (IsCompressedCandidate(header))
+            {
+                GsplatDecodedData decoded = ReadCompressed(input, header, sourceCoordinates, reporter);
+                if (input.BytesRead != header.DataByteCount)
+                    throw new InvalidDataException(
+                        $"PLY payload layout mismatch: consumed {input.BytesRead} of " +
+                        $"{header.DataByteCount} declared bytes.");
+                decoded.Validate();
+                reporter.Report("PLY decoded", input.BytesRead, true);
+                asset.LoadFromDecoded(decoded, progress);
+                return;
+            }
+
+            ReadStandardIntoSpark(input, header, sourceCoordinates, reporter, asset);
+            if (input.BytesRead != header.DataByteCount)
+                throw new InvalidDataException(
+                    $"PLY payload layout mismatch: consumed {input.BytesRead} of " +
+                    $"{header.DataByteCount} declared bytes.");
+            reporter.Report("PLY streamed into Spark", input.BytesRead, true);
+        }
+
+        static void ReadStandardIntoSpark(
+            PlyBinaryReader input,
+            PlyHeader header,
+            SourceCoordinates sourceCoordinates,
+            ProgressReporter reporter,
+            GsplatAssetSpark asset)
+        {
+            PlyElement vertex = header.FindElement("vertex");
+            if (vertex == null)
+                throw new InvalidDataException("Standard Gaussian-splat PLY is missing the vertex element.");
+
+            Dictionary<string, int> propertyIndexes = BuildPropertyIndex(vertex);
+            for (int i = 0; i < k_RequiredVertexPropertyNames.Length; ++i)
+            {
+                if (!propertyIndexes.ContainsKey(k_RequiredVertexPropertyNames[i]))
+                    throw new InvalidDataException(
+                        $"Standard Gaussian-splat PLY is missing vertex property " +
+                        $"'{k_RequiredVertexPropertyNames[i]}'.");
+            }
+
+            int[] shPropertyIndexes;
+            byte shBands = GetStandardShLayout(vertex, out shPropertyIndexes);
+            var transform = new CoordinateTransform(sourceCoordinates, shBands);
+            int[] propertyByteOffsets = GetPropertyByteOffsets(vertex);
+            int shCoefficientCount = GsplatUtils.SHBandsToCoefficientCount(shBands);
+            var shValues = new Vector3[shCoefficientCount];
+            bool isFloat32Record = HasOnlyFloat32Properties(vertex);
+            var writer = asset.BeginRawStreamingLoad(
+                vertex.Count, shBands, ParseAntialiased(header.Comments));
+
+            int xIndex = propertyIndexes["x"];
+            int yIndex = propertyIndexes["y"];
+            int zIndex = propertyIndexes["z"];
+            int dc0Index = propertyIndexes["f_dc_0"];
+            int dc1Index = propertyIndexes["f_dc_1"];
+            int dc2Index = propertyIndexes["f_dc_2"];
+            int opacityIndex = propertyIndexes["opacity"];
+            int scale0Index = propertyIndexes["scale_0"];
+            int scale1Index = propertyIndexes["scale_1"];
+            int scale2Index = propertyIndexes["scale_2"];
+            int rot0Index = propertyIndexes["rot_0"];
+            int rot1Index = propertyIndexes["rot_1"];
+            int rot2Index = propertyIndexes["rot_2"];
+            int rot3Index = propertyIndexes["rot_3"];
+            Bounds bounds = new Bounds(Vector3.zero, Vector3.zero);
+            bool hasBounds = false;
+
+            for (int elementIndex = 0; elementIndex < header.Elements.Count; ++elementIndex)
+            {
+                PlyElement element = header.Elements[elementIndex];
+                string phase = element == vertex
+                    ? "Streaming PLY vertices into Spark"
+                    : $"Skipping PLY element '{element.Name}'";
+
+                if (element != vertex)
+                {
+                    input.SkipExactly(checked((long)element.Count * element.RecordByteCount), reporter, phase);
+                    reporter.Report(phase, input.BytesRead);
+                    continue;
+                }
+
+                const int recordsPerBlock = 4096;
+                for (int blockStart = 0; blockStart < vertex.Count; blockStart += recordsPerBlock)
+                {
+                    int blockCount = Math.Min(recordsPerBlock, vertex.Count - blockStart);
+                    int blockByteCount = checked(blockCount * vertex.RecordByteCount);
+                    ReadOnlySpan<byte> block = input.ReadRecord(blockByteCount);
+                    for (int localIndex = 0; localIndex < blockCount; ++localIndex)
+                    {
+                        int splat = blockStart + localIndex;
+                        ReadOnlySpan<byte> record = block.Slice(
+                            localIndex * vertex.RecordByteCount, vertex.RecordByteCount);
+                        if (isFloat32Record)
+                        {
+                            ReadOnlySpan<float> values = MemoryMarshal.Cast<byte, float>(record);
+                            WriteFloat32Splat(
+                                values, splat, transform, writer, shValues, shPropertyIndexes,
+                                shCoefficientCount, xIndex, yIndex, zIndex,
+                                dc0Index, dc1Index, dc2Index, opacityIndex,
+                                scale0Index, scale1Index, scale2Index,
+                                rot0Index, rot1Index, rot2Index, rot3Index,
+                                ref bounds, ref hasBounds);
+                        }
+                        else
+                        {
+                            WriteMixedScalarSplat(
+                                record, vertex, propertyByteOffsets, splat, transform,
+                                writer, shValues, shPropertyIndexes, shCoefficientCount,
+                                xIndex, yIndex, zIndex, dc0Index, dc1Index, dc2Index,
+                                opacityIndex, scale0Index, scale1Index, scale2Index,
+                                rot0Index, rot1Index, rot2Index, rot3Index,
+                                ref bounds, ref hasBounds);
+                        }
+                    }
+                    reporter.Report(phase, input.BytesRead);
+                }
+                reporter.Report(phase, input.BytesRead);
+            }
+
+            asset.FinishRawStreamingLoad(
+                hasBounds ? bounds : new Bounds(Vector3.zero, Vector3.zero));
+        }
+
         static GsplatDecodedData ReadStandard(
             PlyBinaryReader input,
             PlyHeader header,
@@ -143,6 +298,7 @@ namespace Gsplat
             int rot3Index = propertyIndexes["rot_3"];
             int shCoefficientCount = GsplatUtils.SHBandsToCoefficientCount(shBands);
             double[] values = new double[vertex.Properties.Count];
+            bool isFloat32Record = HasOnlyFloat32Properties(vertex);
             Bounds bounds = new Bounds(Vector3.zero, Vector3.zero);
             bool hasBounds = false;
 
@@ -160,8 +316,15 @@ namespace Gsplat
 
                 for (int splat = 0; splat < vertex.Count; ++splat)
                 {
-                    for (int property = 0; property < vertex.Properties.Count; ++property)
-                        values[property] = input.ReadScalar(vertex.Properties[property].Type);
+                    if (isFloat32Record)
+                    {
+                        input.ReadFloat32Record(values);
+                    }
+                    else
+                    {
+                        for (int property = 0; property < vertex.Properties.Count; ++property)
+                            values[property] = input.ReadScalar(vertex.Properties[property].Type);
+                    }
 
                     Vector3 position = new Vector3(
                         ToFiniteFloat(values[xIndex], "x", splat) * transform.PositionX,
@@ -210,6 +373,194 @@ namespace Gsplat
 
             result.Bounds = hasBounds ? bounds : new Bounds(Vector3.zero, Vector3.zero);
             return result;
+        }
+
+        static bool HasOnlyFloat32Properties(PlyElement element)
+        {
+            for (int i = 0; i < element.Properties.Count; ++i)
+            {
+                if (element.Properties[i].Type != PlyScalarType.Float32)
+                    return false;
+            }
+            return true;
+        }
+
+        static int[] GetPropertyByteOffsets(PlyElement element)
+        {
+            var offsets = new int[element.Properties.Count];
+            int offset = 0;
+            for (int i = 0; i < element.Properties.Count; ++i)
+            {
+                offsets[i] = offset;
+                offset = checked(offset + element.Properties[i].ByteCount);
+            }
+            return offsets;
+        }
+
+        static void WriteFloat32Splat(
+            ReadOnlySpan<float> values,
+            int splat,
+            CoordinateTransform transform,
+            GsplatAssetSpark.RawStreamingWriter writer,
+            Vector3[] shValues,
+            int[] shPropertyIndexes,
+            int shCoefficientCount,
+            int xIndex, int yIndex, int zIndex,
+            int dc0Index, int dc1Index, int dc2Index, int opacityIndex,
+            int scale0Index, int scale1Index, int scale2Index,
+            int rot0Index, int rot1Index, int rot2Index, int rot3Index,
+            ref Bounds bounds,
+            ref bool hasBounds)
+        {
+            var position = new Vector3(
+                ToFiniteFloat(values[xIndex], "x", splat) * transform.PositionX,
+                ToFiniteFloat(values[yIndex], "y", splat) * transform.PositionY,
+                ToFiniteFloat(values[zIndex], "z", splat) * transform.PositionZ);
+            Encapsulate(ref bounds, ref hasBounds, position);
+
+            var dcAndOpacity = new Vector4(
+                ToFiniteFloat(values[dc0Index], "f_dc_0", splat),
+                ToFiniteFloat(values[dc1Index], "f_dc_1", splat),
+                ToFiniteFloat(values[dc2Index], "f_dc_2", splat),
+                ToFiniteFloat(values[opacityIndex], "opacity", splat));
+            var logScale = new Vector3(
+                ToFiniteFloat(values[scale0Index], "scale_0", splat),
+                ToFiniteFloat(values[scale1Index], "scale_1", splat),
+                ToFiniteFloat(values[scale2Index], "scale_2", splat));
+            Vector4 rotation = NormalizeRotation(
+                values[rot0Index],
+                values[rot1Index] * transform.RotationX,
+                values[rot2Index] * transform.RotationY,
+                values[rot3Index] * transform.RotationZ,
+                splat);
+
+            for (int coefficient = 0; coefficient < shCoefficientCount; ++coefficient)
+            {
+                float sign = transform.ShSigns[coefficient];
+                shValues[coefficient] = new Vector3(
+                    ToFiniteShFloat(
+                        values[shPropertyIndexes[coefficient]], coefficient, splat) * sign,
+                    ToFiniteShFloat(
+                        values[shPropertyIndexes[shCoefficientCount + coefficient]],
+                        shCoefficientCount + coefficient, splat) * sign,
+                    ToFiniteShFloat(
+                        values[shPropertyIndexes[2 * shCoefficientCount + coefficient]],
+                        2 * shCoefficientCount + coefficient, splat) * sign);
+            }
+
+            writer.Write(splat, position, logScale, rotation, dcAndOpacity, shValues);
+        }
+
+        static void WriteMixedScalarSplat(
+            ReadOnlySpan<byte> record,
+            PlyElement vertex,
+            int[] propertyByteOffsets,
+            int splat,
+            CoordinateTransform transform,
+            GsplatAssetSpark.RawStreamingWriter writer,
+            Vector3[] shValues,
+            int[] shPropertyIndexes,
+            int shCoefficientCount,
+            int xIndex, int yIndex, int zIndex,
+            int dc0Index, int dc1Index, int dc2Index, int opacityIndex,
+            int scale0Index, int scale1Index, int scale2Index,
+            int rot0Index, int rot1Index, int rot2Index, int rot3Index,
+            ref Bounds bounds,
+            ref bool hasBounds)
+        {
+            var values = new PlyRecordValues(record, vertex, propertyByteOffsets);
+
+            var position = new Vector3(
+                ToFiniteFloat(values.Read(xIndex), "x", splat) * transform.PositionX,
+                ToFiniteFloat(values.Read(yIndex), "y", splat) * transform.PositionY,
+                ToFiniteFloat(values.Read(zIndex), "z", splat) * transform.PositionZ);
+            Encapsulate(ref bounds, ref hasBounds, position);
+
+            var dcAndOpacity = new Vector4(
+                ToFiniteFloat(values.Read(dc0Index), "f_dc_0", splat),
+                ToFiniteFloat(values.Read(dc1Index), "f_dc_1", splat),
+                ToFiniteFloat(values.Read(dc2Index), "f_dc_2", splat),
+                ToFiniteFloat(values.Read(opacityIndex), "opacity", splat));
+            var logScale = new Vector3(
+                ToFiniteFloat(values.Read(scale0Index), "scale_0", splat),
+                ToFiniteFloat(values.Read(scale1Index), "scale_1", splat),
+                ToFiniteFloat(values.Read(scale2Index), "scale_2", splat));
+            Vector4 rotation = NormalizeRotation(
+                values.Read(rot0Index),
+                values.Read(rot1Index) * transform.RotationX,
+                values.Read(rot2Index) * transform.RotationY,
+                values.Read(rot3Index) * transform.RotationZ,
+                splat);
+
+            for (int coefficient = 0; coefficient < shCoefficientCount; ++coefficient)
+            {
+                float sign = transform.ShSigns[coefficient];
+                int rIndex = shPropertyIndexes[coefficient];
+                int gIndex = shPropertyIndexes[shCoefficientCount + coefficient];
+                int bIndex = shPropertyIndexes[2 * shCoefficientCount + coefficient];
+                shValues[coefficient] = new Vector3(
+                    ToFiniteShFloat(values.Read(rIndex), coefficient, splat) * sign,
+                    ToFiniteShFloat(
+                        values.Read(gIndex), shCoefficientCount + coefficient, splat) * sign,
+                    ToFiniteShFloat(
+                        values.Read(bIndex), 2 * shCoefficientCount + coefficient, splat) * sign);
+            }
+
+            writer.Write(splat, position, logScale, rotation, dcAndOpacity, shValues);
+        }
+
+        static double ReadRecordScalar(
+            ReadOnlySpan<byte> record,
+            int offset,
+            PlyScalarType type)
+        {
+            ReadOnlySpan<byte> value = record.Slice(offset);
+            switch (type)
+            {
+                case PlyScalarType.Int8: return unchecked((sbyte)value[0]);
+                case PlyScalarType.UInt8: return value[0];
+                case PlyScalarType.Int16:
+                    return BinaryPrimitives.ReadInt16LittleEndian(value);
+                case PlyScalarType.UInt16:
+                    return BinaryPrimitives.ReadUInt16LittleEndian(value);
+                case PlyScalarType.Int32:
+                    return BinaryPrimitives.ReadInt32LittleEndian(value);
+                case PlyScalarType.UInt32:
+                    return BinaryPrimitives.ReadUInt32LittleEndian(value);
+                case PlyScalarType.Float32:
+                    return BitConverter.Int32BitsToSingle(
+                        BinaryPrimitives.ReadInt32LittleEndian(value));
+                case PlyScalarType.Float64:
+                    return BitConverter.Int64BitsToDouble(
+                        BinaryPrimitives.ReadInt64LittleEndian(value));
+                default:
+                    throw new InvalidOperationException();
+            }
+        }
+
+        readonly ref struct PlyRecordValues
+        {
+            readonly ReadOnlySpan<byte> m_Record;
+            readonly PlyElement m_Element;
+            readonly int[] m_PropertyByteOffsets;
+
+            public PlyRecordValues(
+                ReadOnlySpan<byte> record,
+                PlyElement element,
+                int[] propertyByteOffsets)
+            {
+                m_Record = record;
+                m_Element = element;
+                m_PropertyByteOffsets = propertyByteOffsets;
+            }
+
+            public double Read(int propertyIndex)
+            {
+                return ReadRecordScalar(
+                    m_Record,
+                    m_PropertyByteOffsets[propertyIndex],
+                    m_Element.Properties[propertyIndex].Type);
+            }
         }
 
         static GsplatDecodedData ReadCompressed(
@@ -734,6 +1085,15 @@ namespace Gsplat
             return result;
         }
 
+        static float ToFiniteShFloat(double value, int propertyIndex, int splat)
+        {
+            float result = (float)value;
+            if (double.IsNaN(value) || double.IsInfinity(value) || !IsFinite(result))
+                throw new InvalidDataException(
+                    $"PLY vertex {splat} property 'f_rest_{propertyIndex}' is not a supported finite float.");
+            return result;
+        }
+
         static bool IsFinite(float value)
         {
             return !float.IsNaN(value) && !float.IsInfinity(value);
@@ -955,6 +1315,7 @@ namespace Gsplat
         {
             readonly BinaryReader m_Reader;
             readonly byte[] m_SkipBuffer = new byte[64 * 1024];
+            byte[] m_RecordBuffer = Array.Empty<byte>();
 
             public long BytesRead { get; private set; }
 
@@ -999,6 +1360,35 @@ namespace Gsplat
             public float ReadSingle()
             {
                 return (float)ReadScalar(PlyScalarType.Float32);
+            }
+
+            public void ReadFloat32Record(double[] destination)
+            {
+                int byteCount = checked(destination.Length * sizeof(float));
+                ReadOnlySpan<float> values = MemoryMarshal.Cast<byte, float>(
+                    ReadRecord(byteCount));
+                for (int i = 0; i < values.Length; ++i)
+                    destination[i] = values[i];
+            }
+
+            public ReadOnlySpan<byte> ReadRecord(int byteCount)
+            {
+                if (byteCount < 0)
+                    throw new ArgumentOutOfRangeException(nameof(byteCount));
+                if (m_RecordBuffer.Length < byteCount)
+                    m_RecordBuffer = new byte[byteCount];
+
+                int offset = 0;
+                while (offset < byteCount)
+                {
+                    int read = m_Reader.Read(m_RecordBuffer, offset, byteCount - offset);
+                    if (read <= 0)
+                        throw new InvalidDataException(
+                            "PLY payload ended in the middle of a vertex record.");
+                    offset += read;
+                }
+                BytesRead += byteCount;
+                return m_RecordBuffer.AsSpan(0, byteCount);
             }
 
             public void SkipExactly(

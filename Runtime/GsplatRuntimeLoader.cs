@@ -93,14 +93,21 @@ namespace Gsplat
                     format = DetectFormat(input);
 
                 SourceCoordinates coordinates = ResolveCoordinates(format, sourceCoordinates);
-                GsplatDecodedData decoded = Decode(input, format, coordinates, progress);
-                progress?.Invoke("Packing Unity splat asset", 0f);
-
                 GsplatAsset asset = CreateAsset(compression);
                 try
                 {
                     asset.name = $"Runtime {format} Gsplat";
-                    asset.LoadFromDecoded(decoded, progress);
+                    if (format == GsplatFileFormat.Ply && asset is GsplatAssetSpark spark)
+                    {
+                        PlayCanvasPlyReader.ReadIntoSpark(input, spark, coordinates, progress);
+                    }
+                    else
+                    {
+                        GsplatDecodedData decoded = Decode(
+                            input, format, coordinates, progress);
+                        progress?.Invoke("Packing Unity splat asset", 0f);
+                        asset.LoadFromDecoded(decoded, progress);
+                    }
                     progress?.Invoke("Gaussian splat ready", 1f);
                     return asset;
                 }

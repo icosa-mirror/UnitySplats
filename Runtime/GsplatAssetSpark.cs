@@ -82,6 +82,74 @@ namespace Gsplat
                 PackedSH4 = new uint[SplatCount * 4];
         }
 
+        /// <summary>
+        /// Writes decoded splats directly into Spark buffers without allocating a canonical
+        /// <see cref="GsplatDecodedData"/>. Scale values are logarithmic, opacity is a logit,
+        /// rotations are WXYZ, and SH values exclude the degree-zero color coefficient.
+        /// </summary>
+        internal sealed class RawStreamingWriter
+        {
+            readonly GsplatAssetSpark m_Asset;
+            readonly float[] m_ShBandData = new float[9 * 3];
+
+            internal RawStreamingWriter(GsplatAssetSpark asset)
+            {
+                m_Asset = asset;
+            }
+
+            internal void Write(
+                int index,
+                Vector3 position,
+                Vector3 logScale,
+                Vector4 rotationWxyz,
+                Vector4 dcAndOpacityLogit,
+                ReadOnlySpan<Vector3> shCoefficients)
+            {
+                for (int band = 1, coefficientOffset = 0; band <= m_Asset.SHBands; ++band)
+                {
+                    int bandSize = band * 2 + 1;
+                    for (int coefficient = 0; coefficient < bandSize; ++coefficient)
+                    {
+                        Vector3 value = shCoefficients[coefficientOffset + coefficient];
+                        m_ShBandData[coefficient * 3] = value.x;
+                        m_ShBandData[coefficient * 3 + 1] = value.y;
+                        m_ShBandData[coefficient * 3 + 2] = value.z;
+                    }
+
+                    if (band == 1) PackSH1(m_ShBandData, m_Asset.PackedSH1.AsSpan(index * 2, 2));
+                    if (band == 2) PackSH2(m_ShBandData, m_Asset.PackedSH2.AsSpan(index * 4, 4));
+                    if (band == 3) PackSH3(m_ShBandData, m_Asset.PackedSH3.AsSpan(index * 4, 4));
+                    if (band == 4) PackSH4(m_ShBandData, m_Asset.PackedSH4.AsSpan(index * 4, 4));
+                    coefficientOffset += bandSize;
+                }
+
+                // Quaternion is a four-component WXYZ carrier for the Spark packer.
+                var rotation = new Quaternion(
+                    rotationWxyz.x, rotationWxyz.y, rotationWxyz.z, rotationWxyz.w);
+                m_Asset.PackedSplats[index] =
+                    PackSplat(dcAndOpacityLogit, position, logScale, rotation);
+            }
+        }
+
+        internal RawStreamingWriter BeginRawStreamingLoad(int count, byte shBands, bool antialiased)
+        {
+            if (count < 0)
+                throw new ArgumentOutOfRangeException(nameof(count));
+            if (shBands > 4)
+                throw new ArgumentOutOfRangeException(nameof(shBands));
+
+            SplatCount = checked((uint)count);
+            SHBands = shBands;
+            Antialiased = antialiased;
+            Allocate();
+            return new RawStreamingWriter(this);
+        }
+
+        internal void FinishRawStreamingLoad(Bounds bounds)
+        {
+            Bounds = bounds;
+        }
+
         public override void LoadFromDecoded(GsplatDecodedData data, ProgressCallback progressCallback = null)
         {
             if (data == null) throw new ArgumentNullException(nameof(data));
