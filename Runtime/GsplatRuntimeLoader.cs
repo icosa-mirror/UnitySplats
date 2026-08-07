@@ -97,9 +97,17 @@ namespace Gsplat
                 try
                 {
                     asset.name = $"Runtime {format} Gsplat";
-                    if (format == GsplatFileFormat.Ply && asset is GsplatAssetSpark spark)
+                    if (asset is GsplatAssetSpark spark && format == GsplatFileFormat.Ply)
                     {
                         PlayCanvasPlyReader.ReadIntoSpark(input, spark, coordinates, progress);
+                    }
+                    else if (asset is GsplatAssetSpark spzSpark && format == GsplatFileFormat.Spz)
+                    {
+                        PlayCanvasSpzReader.ReadIntoSpark(input, spzSpark, coordinates, progress);
+                    }
+                    else if (asset is GsplatAssetSpark sogSpark && format == GsplatFileFormat.Sog)
+                    {
+                        PlayCanvasSogReader.ReadBundleIntoSpark(input, sogSpark, coordinates, progress);
                     }
                     else
                     {
@@ -135,13 +143,21 @@ namespace Gsplat
             ProgressCallback progress = null)
         {
             SourceCoordinates coordinates = ResolveCoordinates(GsplatFileFormat.Sog, sourceCoordinates);
-            GsplatDecodedData decoded = PlayCanvasSogReader.ReadUnpacked(
-                metadata, resolveFile, coordinates, progress);
             GsplatAsset asset = CreateAsset(compression);
             try
             {
                 asset.name = "Runtime SOG Gsplat";
-                asset.LoadFromDecoded(decoded, progress);
+                if (asset is GsplatAssetSpark spark)
+                {
+                    PlayCanvasSogReader.ReadUnpackedIntoSpark(
+                        metadata, resolveFile, spark, coordinates, progress);
+                }
+                else
+                {
+                    GsplatDecodedData decoded = PlayCanvasSogReader.ReadUnpacked(
+                        metadata, resolveFile, coordinates, progress);
+                    asset.LoadFromDecoded(decoded, progress);
+                }
                 return asset;
             }
             catch

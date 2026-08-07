@@ -9,6 +9,7 @@ using System.IO;
 using System.IO.Compression;
 using System.Linq;
 using System.Text;
+using System.Threading.Tasks;
 using UnityEngine;
 using WebP;
 
@@ -32,6 +33,23 @@ namespace Gsplat.Formats
             SourceCoordinates sourceCoordinates = SourceCoordinates.RUB,
             ProgressCallback progress = null)
         {
+            return ReadBundleCore(stream, null, sourceCoordinates, progress);
+        }
+
+        internal static void ReadBundleIntoSpark(Stream stream,
+            GsplatAssetSpark asset,
+            SourceCoordinates sourceCoordinates = SourceCoordinates.RUB,
+            ProgressCallback progress = null)
+        {
+            if (asset == null) throw new ArgumentNullException(nameof(asset));
+            ReadBundleCore(stream, asset, sourceCoordinates, progress);
+        }
+
+        static GsplatDecodedData ReadBundleCore(Stream stream,
+            GsplatAssetSpark sparkAsset,
+            SourceCoordinates sourceCoordinates,
+            ProgressCallback progress)
+        {
             if (stream == null) throw new ArgumentNullException(nameof(stream));
             using var archive = new ZipArchive(stream, ZipArchiveMode.Read, leaveOpen: true);
             var entries = archive.Entries
@@ -54,7 +72,7 @@ namespace Gsplat.Formats
             }
 
             string metadata = Encoding.UTF8.GetString(ReadEntry("meta.json"));
-            return ReadUnpacked(metadata, ReadEntry, sourceCoordinates, progress);
+            return ReadUnpackedCore(metadata, ReadEntry, sparkAsset, sourceCoordinates, progress);
         }
 
         /// <param name="resolveFile">Resolves a filename from meta.json to its encoded bytes.</param>
@@ -62,6 +80,25 @@ namespace Gsplat.Formats
             Func<string, byte[]> resolveFile,
             SourceCoordinates sourceCoordinates = SourceCoordinates.RUB,
             ProgressCallback progress = null)
+        {
+            return ReadUnpackedCore(metadata, resolveFile, null, sourceCoordinates, progress);
+        }
+
+        internal static void ReadUnpackedIntoSpark(string metadata,
+            Func<string, byte[]> resolveFile,
+            GsplatAssetSpark asset,
+            SourceCoordinates sourceCoordinates = SourceCoordinates.RUB,
+            ProgressCallback progress = null)
+        {
+            if (asset == null) throw new ArgumentNullException(nameof(asset));
+            ReadUnpackedCore(metadata, resolveFile, asset, sourceCoordinates, progress);
+        }
+
+        static GsplatDecodedData ReadUnpackedCore(string metadata,
+            Func<string, byte[]> resolveFile,
+            GsplatAssetSpark sparkAsset,
+            SourceCoordinates sourceCoordinates,
+            ProgressCallback progress)
         {
             if (string.IsNullOrWhiteSpace(metadata)) throw new ArgumentException("SOG metadata is empty.", nameof(metadata));
             if (resolveFile == null) throw new ArgumentNullException(nameof(resolveFile));
@@ -129,15 +166,12 @@ namespace Gsplat.Formats
 
             bool flipRows = DetermineVerticalFlip(quats, count);
             bool antialiased = root.OptionalBool("antialias", false);
-            var result = new GsplatDecodedData(count, (byte)shBands) { Antialiased = antialiased };
             var (px, py, pz) = GsplatUtils.AxisSigns(sourceCoordinates);
             float qxSign = py * pz;
             float qySign = px * pz;
             float qzSign = px * py;
-            Vector3 boundsMin = Vector3.positiveInfinity;
-            Vector3 boundsMax = Vector3.negativeInfinity;
 
-            for (int i = 0; i < count; i++)
+            DecodedSogSplat DecodeSplat(int i, Vector3[] shValues)
             {
                 int x = i % meansLow.Width;
                 int y = i / meansLow.Width;
@@ -151,24 +185,19 @@ namespace Gsplat.Formats
                 float ny = Mathf.Lerp(meansMin[1], meansMax[1], ((high.G << 8) | low.G) / 65535f);
                 float nz = Mathf.Lerp(meansMin[2], meansMax[2], ((high.B << 8) | low.B) / 65535f);
                 Vector3 position = new(px * Unlog(nx), py * Unlog(ny), pz * Unlog(nz));
-                result.Positions[i] = position;
-                boundsMin = Vector3.Min(boundsMin, position);
-                boundsMax = Vector3.Max(boundsMax, position);
 
                 float sx = version == 2 ? scaleCodebook[scalePixel.R] : Mathf.Lerp(scaleMin[0], scaleMax[0], scalePixel.R / 255f);
                 float sy = version == 2 ? scaleCodebook[scalePixel.G] : Mathf.Lerp(scaleMin[1], scaleMax[1], scalePixel.G / 255f);
                 float sz = version == 2 ? scaleCodebook[scalePixel.B] : Mathf.Lerp(scaleMin[2], scaleMax[2], scalePixel.B / 255f);
-                result.Scales[i] = new Vector3(Mathf.Exp(sx), Mathf.Exp(sy), Mathf.Exp(sz));
+                var logScale = new Vector3(sx, sy, sz);
 
                 Quaternion q = DecodeQuaternion(quatPixel);
                 var qWxyz = new Vector4(q.w, qxSign * q.x, qySign * q.y, qzSign * q.z).normalized;
-                result.Rotations[i] = qWxyz;
 
                 float dcR = version == 2 ? sh0Codebook[colorPixel.R] : Mathf.Lerp(sh0Min[0], sh0Max[0], colorPixel.R / 255f);
                 float dcG = version == 2 ? sh0Codebook[colorPixel.G] : Mathf.Lerp(sh0Min[1], sh0Max[1], colorPixel.G / 255f);
                 float dcB = version == 2 ? sh0Codebook[colorPixel.B] : Mathf.Lerp(sh0Min[2], sh0Max[2], colorPixel.B / 255f);
                 float alpha = version == 2 ? colorPixel.A / 255f : Sigmoid(Mathf.Lerp(sh0Min[3], sh0Max[3], colorPixel.A / 255f));
-                result.Colors[i] = new Vector4(dcR, dcG, dcB, alpha);
 
                 if (shBands > 0)
                 {
@@ -185,16 +214,121 @@ namespace Gsplat.Formats
                         float g = version == 2 ? shCodebook[coefficient.G] : Mathf.Lerp(shMin, shMax, coefficient.G / 255f);
                         float b = version == 2 ? shCodebook[coefficient.B] : Mathf.Lerp(shMin, shMax, coefficient.B / 255f);
                         float sign = ShSign(sourceCoordinates, k);
-                        result.SHs[i * shCoefficients + k] = sign * new Vector3(r, g, b);
+                        shValues[k] = sign * new Vector3(r, g, b);
                     }
                 }
 
+                return new DecodedSogSplat(
+                    position,
+                    logScale,
+                    qWxyz,
+                    new Vector4(dcR, dcG, dcB, alpha));
+            }
+
+            if (sparkAsset != null)
+            {
+                sparkAsset.BeginRawStreamingLoad(count, (byte)shBands, antialiased);
+                progress?.Invoke("Packing SOG splats", 0f);
+                Vector3 boundsMin = Vector3.positiveInfinity;
+                Vector3 boundsMax = Vector3.negativeInfinity;
+                var boundsLock = new object();
+
+                Parallel.For(
+                    0,
+                    count,
+                    () => new SparkThreadState(sparkAsset, shCoefficients),
+                    (i, _, state) =>
+                    {
+                        DecodedSogSplat splat = DecodeSplat(i, state.SH);
+                        Vector4 color = splat.Color;
+                        float alpha = Mathf.Clamp(color.w, 1e-6f, 1f - 1e-6f);
+                        color.w = Mathf.Log(alpha / (1f - alpha));
+                        state.Writer.Write(
+                            i,
+                            splat.Position,
+                            splat.LogScale,
+                            splat.RotationWxyz,
+                            color,
+                            state.SH);
+                        state.BoundsMin = Vector3.Min(state.BoundsMin, splat.Position);
+                        state.BoundsMax = Vector3.Max(state.BoundsMax, splat.Position);
+                        return state;
+                    },
+                    state =>
+                    {
+                        lock (boundsLock)
+                        {
+                            boundsMin = Vector3.Min(boundsMin, state.BoundsMin);
+                            boundsMax = Vector3.Max(boundsMax, state.BoundsMax);
+                        }
+                    });
+
+                sparkAsset.FinishRawStreamingLoad(
+                    new Bounds((boundsMin + boundsMax) * 0.5f, boundsMax - boundsMin));
+                progress?.Invoke("Packing SOG splats", 1f);
+                return null;
+            }
+
+            var result = new GsplatDecodedData(count, (byte)shBands) { Antialiased = antialiased };
+            var canonicalSH = new Vector3[shCoefficients];
+            Vector3 canonicalBoundsMin = Vector3.positiveInfinity;
+            Vector3 canonicalBoundsMax = Vector3.negativeInfinity;
+            for (int i = 0; i < count; ++i)
+            {
+                DecodedSogSplat splat = DecodeSplat(i, canonicalSH);
+                result.Positions[i] = splat.Position;
+                result.Scales[i] = new Vector3(
+                    Mathf.Exp(splat.LogScale.x),
+                    Mathf.Exp(splat.LogScale.y),
+                    Mathf.Exp(splat.LogScale.z));
+                result.Rotations[i] = splat.RotationWxyz;
+                result.Colors[i] = splat.Color;
+                if (shCoefficients > 0)
+                    Array.Copy(canonicalSH, 0, result.SHs, i * shCoefficients, shCoefficients);
+                canonicalBoundsMin = Vector3.Min(canonicalBoundsMin, splat.Position);
+                canonicalBoundsMax = Vector3.Max(canonicalBoundsMax, splat.Position);
                 if ((i & 0x3fff) == 0) progress?.Invoke("Decoding SOG splats", i / (float)count);
             }
 
-            result.Bounds = new Bounds((boundsMin + boundsMax) * 0.5f, boundsMax - boundsMin);
+            result.Bounds = new Bounds(
+                (canonicalBoundsMin + canonicalBoundsMax) * 0.5f,
+                canonicalBoundsMax - canonicalBoundsMin);
             progress?.Invoke("Decoding SOG splats", 1f);
             return result;
+        }
+
+        readonly struct DecodedSogSplat
+        {
+            public readonly Vector3 Position;
+            public readonly Vector3 LogScale;
+            public readonly Vector4 RotationWxyz;
+            public readonly Vector4 Color;
+
+            public DecodedSogSplat(
+                Vector3 position,
+                Vector3 logScale,
+                Vector4 rotationWxyz,
+                Vector4 color)
+            {
+                Position = position;
+                LogScale = logScale;
+                RotationWxyz = rotationWxyz;
+                Color = color;
+            }
+        }
+
+        sealed class SparkThreadState
+        {
+            public readonly GsplatAssetSpark.RawStreamingWriter Writer;
+            public readonly Vector3[] SH;
+            public Vector3 BoundsMin = Vector3.positiveInfinity;
+            public Vector3 BoundsMax = Vector3.negativeInfinity;
+
+            public SparkThreadState(GsplatAssetSpark asset, int shCoefficients)
+            {
+                Writer = new GsplatAssetSpark.RawStreamingWriter(asset);
+                SH = new Vector3[shCoefficients];
+            }
         }
 
         static Dictionary<string, object> RequiredObject(Dictionary<string, object> root, string name) =>

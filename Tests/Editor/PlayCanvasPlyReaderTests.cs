@@ -49,10 +49,20 @@ namespace Gsplat.Tests
             const int count = 10000;
             byte[] bytes = BuildStandardPly(count, doublePrecisionX, out int payloadOffset);
             using var stream = new CountingStream(bytes, payloadOffset);
+            GsplatAssetSpark expected = null;
             GsplatAsset asset = null;
 
             try
             {
+                using (var expectedStream = new MemoryStream(bytes, false))
+                {
+                    GsplatDecodedData decoded = PlayCanvasPlyReader.Read(
+                        expectedStream,
+                        SourceCoordinates.RUF);
+                    expected = UnityEngine.ScriptableObject.CreateInstance<GsplatAssetSpark>();
+                    expected.LoadFromDecoded(decoded);
+                }
+
                 asset = GsplatRuntimeLoader.Load(
                     stream,
                     GsplatFileFormat.Ply,
@@ -61,11 +71,17 @@ namespace Gsplat.Tests
 
                 Assert.That(asset, Is.TypeOf<GsplatAssetSpark>());
                 Assert.That(asset.SplatCount, Is.EqualTo((uint)count));
+                var actual = (GsplatAssetSpark)asset;
+                Assert.That(actual.Bounds.center, Is.EqualTo(expected.Bounds.center));
+                Assert.That(actual.Bounds.size, Is.EqualTo(expected.Bounds.size));
+                CollectionAssert.AreEqual(expected.PackedSplats, actual.PackedSplats);
                 Assert.That(stream.PayloadReadCalls, Is.LessThanOrEqualTo(4),
                     "The runtime Spark path should read thousands of records per payload block.");
             }
             finally
             {
+                if (expected != null)
+                    UnityEngine.Object.DestroyImmediate(expected);
                 if (asset != null)
                     UnityEngine.Object.DestroyImmediate(asset);
             }

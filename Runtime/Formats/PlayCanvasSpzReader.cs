@@ -3,6 +3,7 @@
 
 using System;
 using System.IO;
+using System.Threading.Tasks;
 using UnityEngine;
 
 namespace Gsplat.Formats
@@ -80,6 +81,111 @@ namespace Gsplat.Formats
                 : new Bounds(Vector3.zero, Vector3.zero);
             progress?.Invoke("Decoding SPZ splats", 1f);
             return result;
+        }
+
+        internal static void ReadIntoSpark(Stream stream,
+            GsplatAssetSpark asset,
+            SourceCoordinates sourceCoordinates = SourceCoordinates.RUB,
+            ProgressCallback progress = null)
+        {
+            if (stream == null) throw new ArgumentNullException(nameof(stream));
+            if (asset == null) throw new ArgumentNullException(nameof(asset));
+
+            SpzData source = SpzLoader.Load(stream);
+            SpzHeader header = source.Header;
+            if (header.ShDegree > 4)
+                throw new NotSupportedException($"SPZ SH degree {header.ShDegree} exceeds the supported maximum of 4.");
+
+            int count = checked((int)header.NumPoints);
+            int shCoefficients = SpzLoader.ShDim(header.ShDegree);
+            bool float16Positions = header.Version == 1;
+            bool smallestThreeRotation = header.Version >= 3;
+            bool antialiased = (header.Flags & 1) != 0;
+            var transform = new CoordinateTransform(source, sourceCoordinates);
+
+            asset.BeginRawStreamingLoad(count, header.ShDegree, antialiased);
+            progress?.Invoke("Packing SPZ splats", 0f);
+
+            Vector3 boundsMin = Vector3.positiveInfinity;
+            Vector3 boundsMax = Vector3.negativeInfinity;
+            var boundsLock = new object();
+
+            Parallel.For(
+                0,
+                count,
+                () => new SparkThreadState(asset, shCoefficients),
+                (i, _, state) =>
+                {
+                    Vector3 rawPosition = float16Positions
+                        ? SpzLoader.DecodePositionFloat16(source.Positions, i)
+                        : SpzLoader.DecodePosition(source.Positions, i, header.FractionalBits);
+                    Vector3 position = transform.Position(rawPosition);
+
+                    Vector3 logScale = SpzLoader.DecodeScaleLog(source.Scales, i);
+                    Quaternion transformedRotation = transform.Rotation(
+                        SpzLoader.DecodeRotation(source.Rotations, i, smallestThreeRotation));
+                    Vector4 rotationWxyz = new Vector4(
+                        transformedRotation.w,
+                        transformedRotation.x,
+                        transformedRotation.y,
+                        transformedRotation.z).normalized;
+
+                    Vector3 dc = SpzLoader.DecodeColor(source.Colors, i);
+                    var dcAndOpacityLogit = new Vector4(
+                        dc.x,
+                        dc.y,
+                        dc.z,
+                        SpzLoader.DecodeAlphaLogit(source.Alphas, i));
+
+                    for (int coefficient = 0; coefficient < shCoefficients; ++coefficient)
+                    {
+                        int offset = (i * shCoefficients + coefficient) * 3;
+                        state.SH[coefficient] = new Vector3(
+                            SpzLoader.UnquantizeSH(source.SH, offset),
+                            SpzLoader.UnquantizeSH(source.SH, offset + 1),
+                            SpzLoader.UnquantizeSH(source.SH, offset + 2));
+                    }
+                    transform.SH(state.SH, 0, header.ShDegree);
+
+                    state.Writer.Write(
+                        i,
+                        position,
+                        logScale,
+                        rotationWxyz,
+                        dcAndOpacityLogit,
+                        state.SH);
+                    state.BoundsMin = Vector3.Min(state.BoundsMin, position);
+                    state.BoundsMax = Vector3.Max(state.BoundsMax, position);
+                    return state;
+                },
+                state =>
+                {
+                    lock (boundsLock)
+                    {
+                        boundsMin = Vector3.Min(boundsMin, state.BoundsMin);
+                        boundsMax = Vector3.Max(boundsMax, state.BoundsMax);
+                    }
+                });
+
+            Bounds bounds = count > 0
+                ? new Bounds((boundsMin + boundsMax) * 0.5f, boundsMax - boundsMin)
+                : new Bounds(Vector3.zero, Vector3.zero);
+            asset.FinishRawStreamingLoad(bounds);
+            progress?.Invoke("Packing SPZ splats", 1f);
+        }
+
+        sealed class SparkThreadState
+        {
+            public readonly GsplatAssetSpark.RawStreamingWriter Writer;
+            public readonly Vector3[] SH;
+            public Vector3 BoundsMin = Vector3.positiveInfinity;
+            public Vector3 BoundsMax = Vector3.negativeInfinity;
+
+            public SparkThreadState(GsplatAssetSpark asset, int shCoefficients)
+            {
+                Writer = new GsplatAssetSpark.RawStreamingWriter(asset);
+                SH = new Vector3[shCoefficients];
+            }
         }
 
         // Converts the storage coordinate system described by SPZ_ADOBE_coordinate_system

@@ -8,6 +8,7 @@ using System.Globalization;
 using System.IO;
 using System.Runtime.InteropServices;
 using System.Text;
+using System.Threading.Tasks;
 using UnityEngine;
 
 namespace Gsplat
@@ -221,25 +222,49 @@ namespace Gsplat
                 {
                     int blockCount = Math.Min(recordsPerBlock, vertex.Count - blockStart);
                     int blockByteCount = checked(blockCount * vertex.RecordByteCount);
-                    ReadOnlySpan<byte> block = input.ReadRecord(blockByteCount);
-                    for (int localIndex = 0; localIndex < blockCount; ++localIndex)
+                    byte[] block = input.ReadRecordBuffer(blockByteCount);
+                    if (isFloat32Record)
                     {
-                        int splat = blockStart + localIndex;
-                        ReadOnlySpan<byte> record = block.Slice(
-                            localIndex * vertex.RecordByteCount, vertex.RecordByteCount);
-                        if (isFloat32Record)
+                        object boundsLock = new object();
+                        Parallel.For(
+                            0,
+                            blockCount,
+                            () => new Float32SparkThreadState(asset, shCoefficientCount),
+                            (localIndex, _, state) =>
+                            {
+                                int splat = blockStart + localIndex;
+                                ReadOnlySpan<float> values = MemoryMarshal.Cast<byte, float>(
+                                    block.AsSpan(
+                                        localIndex * vertex.RecordByteCount,
+                                        vertex.RecordByteCount));
+                                WriteFloat32Splat(
+                                    values, splat, transform, state.Writer, state.ShValues,
+                                    shPropertyIndexes,
+                                    shCoefficientCount, xIndex, yIndex, zIndex,
+                                    dc0Index, dc1Index, dc2Index, opacityIndex,
+                                    scale0Index, scale1Index, scale2Index,
+                                    rot0Index, rot1Index, rot2Index, rot3Index,
+                                    ref state.Bounds, ref state.HasBounds);
+                                return state;
+                            },
+                            state =>
+                            {
+                                if (!state.HasBounds)
+                                    return;
+                                lock (boundsLock)
+                                {
+                                    Encapsulate(ref bounds, ref hasBounds, state.Bounds.min);
+                                    Encapsulate(ref bounds, ref hasBounds, state.Bounds.max);
+                                }
+                            });
+                    }
+                    else
+                    {
+                        for (int localIndex = 0; localIndex < blockCount; ++localIndex)
                         {
-                            ReadOnlySpan<float> values = MemoryMarshal.Cast<byte, float>(record);
-                            WriteFloat32Splat(
-                                values, splat, transform, writer, shValues, shPropertyIndexes,
-                                shCoefficientCount, xIndex, yIndex, zIndex,
-                                dc0Index, dc1Index, dc2Index, opacityIndex,
-                                scale0Index, scale1Index, scale2Index,
-                                rot0Index, rot1Index, rot2Index, rot3Index,
-                                ref bounds, ref hasBounds);
-                        }
-                        else
-                        {
+                            int splat = blockStart + localIndex;
+                            ReadOnlySpan<byte> record = block.AsSpan(
+                                localIndex * vertex.RecordByteCount, vertex.RecordByteCount);
                             WriteMixedScalarSplat(
                                 record, vertex, propertyByteOffsets, splat, transform,
                                 writer, shValues, shPropertyIndexes, shCoefficientCount,
@@ -449,6 +474,20 @@ namespace Gsplat
             }
 
             writer.Write(splat, position, logScale, rotation, dcAndOpacity, shValues);
+        }
+
+        sealed class Float32SparkThreadState
+        {
+            internal readonly GsplatAssetSpark.RawStreamingWriter Writer;
+            internal readonly Vector3[] ShValues;
+            internal Bounds Bounds;
+            internal bool HasBounds;
+
+            internal Float32SparkThreadState(GsplatAssetSpark asset, int shCoefficientCount)
+            {
+                Writer = new GsplatAssetSpark.RawStreamingWriter(asset);
+                ShValues = new Vector3[shCoefficientCount];
+            }
         }
 
         static void WriteMixedScalarSplat(
@@ -1373,6 +1412,11 @@ namespace Gsplat
 
             public ReadOnlySpan<byte> ReadRecord(int byteCount)
             {
+                return ReadRecordBuffer(byteCount).AsSpan(0, byteCount);
+            }
+
+            public byte[] ReadRecordBuffer(int byteCount)
+            {
                 if (byteCount < 0)
                     throw new ArgumentOutOfRangeException(nameof(byteCount));
                 if (m_RecordBuffer.Length < byteCount)
@@ -1388,7 +1432,7 @@ namespace Gsplat
                     offset += read;
                 }
                 BytesRead += byteCount;
-                return m_RecordBuffer.AsSpan(0, byteCount);
+                return m_RecordBuffer;
             }
 
             public void SkipExactly(
