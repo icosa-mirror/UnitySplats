@@ -1,4 +1,4 @@
-﻿// Originated from the GaussianSplatHDRPPass in aras-p/UnityGaussianSplatting by Aras Pranckevičius
+// Originated from the GaussianSplatHDRPPass in aras-p/UnityGaussianSplatting by Aras Pranckevičius
 // https://github.com/aras-p/UnityGaussianSplatting/blob/main/package/Runtime/GaussianSplatHDRPPass.cs
 // Copyright (c) 2023 Aras Pranckevičius
 // Modified by Yize Wu
@@ -35,6 +35,10 @@ namespace Gsplat
                 using var builder = renderGraph.AddUnsafePass(GsplatSorter.k_passName, out PassData passData);
                 passData.CameraData = frameData.Get<UniversalCameraData>();
                 builder.AllowPassCulling(false);
+                // DispatchSort records camera-local relighting globals. RenderGraph must know
+                // that this pass mutates global shader state, otherwise it may reorder the pass
+                // or let another camera's Scene/Game binding remain active for transparent draws.
+                builder.AllowGlobalStateModification(true);
                 builder.SetRenderFunc(static (PassData data, UnsafeGraphContext context) =>
                 {
                     var commandBuffer = CommandBufferHelpers.GetNativeCommandBuffer(context.cmd);
@@ -73,9 +77,9 @@ namespace Gsplat
 
         public override void AddRenderPasses(ScriptableRenderer renderer, ref RenderingData renderingData)
         {
-            // CPU fallback work is consumed by GsplatPlayerLoopHook. OnCameraPreCull still
-            // gathers the camera, but no render-graph callback may upload its order buffer.
-            if (GsplatSorter.Instance.GpuSortEnabled && GsplatSettings.Instance.Valid && m_hasGsplats)
+            // CPU fallback sorting is consumed by GsplatPlayerLoopHook, but it still needs this
+            // lightweight pass so each camera receives its own relighting texture binding.
+            if (GsplatSettings.Instance.Valid && m_hasGsplats)
                 renderer.EnqueuePass(m_pass);
         }
 

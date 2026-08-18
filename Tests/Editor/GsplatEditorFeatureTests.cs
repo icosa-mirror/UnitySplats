@@ -53,5 +53,6 @@ namespace Gsplat.Tests
                 UnityEngine.Object.DestroyImmediate(settings);
             }
         }
+
     }
 }

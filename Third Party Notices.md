@@ -12,7 +12,7 @@ UnitySplats is a modified and substantially extended fork of `gsplat-unity`.
 
 ## PlayCanvas Engine
 
-Parts of the Gaussian-splat renderer architecture and PLY, SOG, GLB, and LOD behavior are adapted from or based on PlayCanvas Engine Gaussian-splat code. The reference checkout used for this Unity implementation was PlayCanvas Engine `v2.21.0-beta.14`, commit `d5fe88878e338936fe763bbce1a58bc315e89cbe`.
+Parts of the Gaussian-splat renderer architecture, PLY, SOG, GLB, LOD behavior, and proxy-mesh screen-space relighting design are adapted from or based on PlayCanvas Engine Gaussian-splat code. The relighting reference is `scripts/esm/gsplat/gsplat-relighting.mjs`. The reference checkout used for this Unity implementation was PlayCanvas Engine `v2.21.0-beta.14`, commit `d5fe88878e338936fe763bbce1a58bc315e89cbe`.
 
 - Project: https://github.com/playcanvas/engine
 - License: MIT

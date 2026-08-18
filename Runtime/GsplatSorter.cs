@@ -7,6 +7,9 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+#if UNITY_EDITOR
+using UnityEditor;
+#endif
 using UnityEngine;
 using UnityEngine.Rendering;
 
@@ -41,7 +44,8 @@ namespace Gsplat
     // https://github.com/aras-p/UnityGaussianSplatting/blob/main/package/Runtime/GaussianSplatRenderer.cs
     public class GsplatSorter
     {
-        const int k_cpuSortKeyCount = 1 << 16;
+        const int k_cpuSortRadix = 1 << 8;
+        const int k_cpuSortPasses = sizeof(uint);
         const int k_cpuCancellationCheckMask = (1 << 14) - 1;
 
         sealed class CpuCenterCache
@@ -57,16 +61,20 @@ namespace Gsplat
 
         sealed class CpuSortWorkspace
         {
-            public ushort[] Keys = Array.Empty<ushort>();
             public uint[] Order = Array.Empty<uint>();
-            public readonly int[] Histogram = new int[k_cpuSortKeyCount];
+            public uint[] ScratchOrder = Array.Empty<uint>();
+            public byte[] Digits = Array.Empty<byte>();
+            public readonly int[] Histogram = new int[k_cpuSortRadix];
+            public readonly int[] Offsets = new int[k_cpuSortRadix];
 
             public void EnsureCapacity(int count)
             {
-                if (Keys.Length < count)
-                    Keys = new ushort[count];
                 if (Order.Length < count)
                     Order = new uint[count];
+                if (ScratchOrder.Length < count)
+                    ScratchOrder = new uint[count];
+                if (Digits.Length < count)
+                    Digits = new byte[count];
             }
         }
 
@@ -268,6 +276,19 @@ namespace Gsplat
                 m_hasPendingCpuRequest = true;
             }
 
+            public void InvalidateCpuCamera()
+            {
+                if (m_usesGpuSort || m_disposed)
+                    return;
+
+                // A task queued for another camera must never overwrite the order selected for
+                // the newly active Scene/Game viewport when it happens to finish a frame later.
+                CancelCpuWork();
+                m_cpuGeneration++;
+                m_hasPendingCpuRequest = false;
+                LastCpuRequestedCount = uint.MaxValue;
+            }
+
             // Called only from GsplatPlayerLoopHook. Completed CPU work is uploaded here so
             // GraphicsBuffer.SetData is never invoked from a render-thread/SRP callback.
             public void UpdateCpuWork()
@@ -383,10 +404,15 @@ namespace Gsplat
         readonly HashSet<UnityEngine.Object> m_warnedGlobalIndexLimit = new();
         readonly HashSet<UnityEngine.Object> m_warnedGlobalLayer = new();
         readonly HashSet<UnityEngine.Object> m_warnedGlobalRenderOrder = new();
+        readonly HashSet<UnityEngine.Object> m_warnedGlobalRelightingSource = new();
         bool m_warnedGlobalCapacity;
         readonly Dictionary<GsplatAsset, CpuCenterCache> m_cpuCenterCaches = new();
         GsplatSortPass m_sortPass;
         Camera m_cpuSortCamera;
+        Camera m_lastCpuSortCamera;
+#if UNITY_EDITOR
+        Camera m_editorPreferredCpuSortCamera;
+#endif
         bool m_warnedCpuFallback;
         public const string k_passName = "SortGsplats";
         const string k_depthPassName = "Gsplat.ComputeDepth";
@@ -458,6 +484,7 @@ namespace Gsplat
                 m_warnedGlobalIndexLimit.Remove(obj);
                 m_warnedGlobalLayer.Remove(obj);
                 m_warnedGlobalRenderOrder.Remove(obj);
+                m_warnedGlobalRelightingSource.Remove(obj);
             }
 
             m_globalRenderer.MarkGlobalBuffersDirty();
@@ -474,6 +501,10 @@ namespace Gsplat
 
             m_activeGsplats.Clear();
             m_cpuSortCamera = null;
+            m_lastCpuSortCamera = null;
+#if UNITY_EDITOR
+            m_editorPreferredCpuSortCamera = null;
+#endif
             m_commandBuffer?.Dispose();
             m_commandBuffer = null;
             Camera.onPreCull -= OnPreCullCamera;
@@ -482,7 +513,7 @@ namespace Gsplat
 
         public bool GatherGsplatsForCamera(Camera cam)
         {
-            if (cam.cameraType == CameraType.Preview)
+            if (cam.cameraType == CameraType.Preview || GsplatRelighting.IsProxyCamera(cam))
                 return false;
 
             if (CpuFallbackEnabled)
@@ -508,6 +539,7 @@ namespace Gsplat
             }
 
             var commonLayer = (m_activeGsplats[0] as Component)?.gameObject.layer ?? 0;
+            GsplatRelighting commonRelightingSource = null;
             ulong totalSplatCount = 0;
 
             // Global merge requires every active renderer to use SPARK compression.
@@ -549,6 +581,22 @@ namespace Gsplat
                         Debug.LogWarning(
                             $"[GsplatSorter] '{renderer.name}' uses custom Render Order {renderer.RenderOrder}. A single merged draw cannot preserve per-renderer transparent queues, so global sort is disabled for this scene.");
                     return false;
+                }
+
+                if (gs is GsplatRenderer relightedRenderer &&
+                    relightedRenderer.TryGetActiveRelighting(out var relightingSource))
+                {
+                    if (!commonRelightingSource)
+                    {
+                        commonRelightingSource = relightingSource;
+                    }
+                    else if (commonRelightingSource != relightingSource)
+                    {
+                        if (m_warnedGlobalRelightingSource.Add(obj))
+                            Debug.LogWarning(
+                                $"[GsplatSorter] '{relightedRenderer.name}' uses a different relighting camera from another active splat. A merged draw can sample only one screen-space relighting texture, so global sorting is disabled for this scene.");
+                        return false;
+                    }
                 }
 
                 // GlobalOrderBuffer packs the local splat ID into 24 bits.
@@ -603,19 +651,20 @@ namespace Gsplat
             if (!Valid || !GsplatSettings.Instance.Valid || !GatherGsplatsForCamera(camera))
                 return;
 
-            // Gather records the camera for the next player-loop CPU update. Never upload a
-            // GraphicsBuffer from this render callback.
-            if (CpuFallbackEnabled)
-                return;
-
             InitialClearCmdBuffer(camera);
             DispatchSort(m_commandBuffer, camera);
         }
 
         public void DispatchSort(CommandBuffer cmd, Camera camera)
         {
+            // Bind camera-local relighting inside the render command stream. Shader.SetGlobal*
+            // callbacks can be overwritten when Game and Scene cameras are recorded together.
+            GsplatRelighting.BindForCamera(cmd, camera);
+
             if (!GpuSortEnabled)
             {
+                // Gather records the camera for the next player-loop CPU update. This callback
+                // only records the texture binding and never uploads the CPU order buffer.
                 if (CpuFallbackEnabled)
                     RememberCpuSortCamera(camera);
                 return;
@@ -736,7 +785,7 @@ namespace Gsplat
                     ? "asynchronous"
                     : "main-thread";
                 Debug.LogWarning(
-                    $"[GsplatSorter] GPU wave-op radix sorting is unavailable on {SystemInfo.graphicsDeviceType}; using the {scheduling} 16-bit CPU counting-sort fallback.{vertexData} Global merge and compute cutouts are disabled in this mode.");
+                    $"[GsplatSorter] GPU wave-op radix sorting is unavailable on {SystemInfo.graphicsDeviceType}; using the {scheduling} full-precision CPU radix-sort fallback.{vertexData} Global merge and compute cutouts are disabled in this mode.");
             }
 
             m_activeGsplats.Clear();
@@ -747,24 +796,33 @@ namespace Gsplat
                 if (gs.RemainingCount == 0)
                     continue;
                 m_activeGsplats.Add(gs);
-                if (gs.SorterResource is Resource { UsesGpuSort: false } res)
-                    res.UpdateCpuWork();
             }
 
             var camera = ResolveCpuSortCamera();
             if (!camera)
+            {
+                foreach (var gs in m_activeGsplats)
+                    if (gs.SorterResource is Resource { UsesGpuSort: false } res)
+                        res.UpdateCpuWork();
                 return;
+            }
 
+            var cameraChanged = camera != m_lastCpuSortCamera;
+            m_lastCpuSortCamera = camera;
             var matrixV = camera.worldToCameraMatrix;
             foreach (var gs in m_activeGsplats)
             {
                 if (gs.SorterResource is not Resource { UsesGpuSort: false } res)
                     continue;
 
+                if (cameraChanged)
+                    res.InvalidateCpuCamera();
+                res.UpdateCpuWork();
                 var countChanged = gs.RemainingCount != res.LastCpuRequestedCount;
-                if (gs.ComputeSortRequired || countChanged || !res.Initialized)
+                var forceSort = gs.ComputeSortRequired || !res.Initialized || cameraChanged;
+                if (forceSort || countChanged)
                     res.QueueCpuSort(matrixV * gs.transform.localToWorldMatrix, gs.RemainingCount,
-                        gs.ComputeSortRequired || !res.Initialized);
+                        forceSort);
                 res.UpdateCpuWork();
             }
         }
@@ -774,8 +832,8 @@ namespace Gsplat
             if (!camera)
                 return;
 
-            // Prefer a game camera over Scene view/reflection cameras. One order buffer is
-            // shared by all cameras, matching the package's existing per-renderer behavior.
+            // Runtime players prefer a Game camera. In the Editor, ResolveCpuSortCamera applies
+            // the active Scene/Game viewport preference before consuming this remembered value.
             if (!m_cpuSortCamera || camera.cameraType == CameraType.Game ||
                 m_cpuSortCamera.cameraType != CameraType.Game)
                 m_cpuSortCamera = camera;
@@ -783,11 +841,20 @@ namespace Gsplat
 
         Camera ResolveCpuSortCamera()
         {
-            if (m_cpuSortCamera && m_cpuSortCamera.isActiveAndEnabled)
+#if UNITY_EDITOR
+            var editorCamera = ResolveEditorCpuSortCamera();
+            if (IsUsableCpuSortCamera(editorCamera))
+            {
+                m_cpuSortCamera = editorCamera;
+                return editorCamera;
+            }
+#endif
+
+            if (IsUsableCpuSortCamera(m_cpuSortCamera))
                 return m_cpuSortCamera;
 
             var main = Camera.main;
-            if (main && main.isActiveAndEnabled)
+            if (IsUsableCpuSortCamera(main))
             {
                 m_cpuSortCamera = main;
                 return main;
@@ -795,7 +862,7 @@ namespace Gsplat
 
             foreach (var camera in Camera.allCameras)
             {
-                if (!camera || !camera.isActiveAndEnabled || camera.cameraType == CameraType.Preview)
+                if (!IsUsableCpuSortCamera(camera))
                     continue;
                 m_cpuSortCamera = camera;
                 return camera;
@@ -804,6 +871,54 @@ namespace Gsplat
             m_cpuSortCamera = null;
             return null;
         }
+
+        static bool IsUsableCpuSortCamera(Camera camera) =>
+            camera &&
+            camera.cameraType != CameraType.Preview &&
+            !GsplatRelighting.IsProxyCamera(camera) &&
+            (camera.isActiveAndEnabled || camera.cameraType == CameraType.SceneView);
+
+#if UNITY_EDITOR
+        Camera ResolveEditorCpuSortCamera()
+        {
+            var focusedWindow = EditorWindow.focusedWindow;
+            if (focusedWindow is SceneView focusedSceneView)
+            {
+                m_editorPreferredCpuSortCamera = focusedSceneView.camera;
+            }
+            else if (focusedWindow && focusedWindow.GetType().FullName == "UnityEditor.GameView")
+            {
+                m_editorPreferredCpuSortCamera = FindGameCpuSortCamera();
+            }
+            else if (!Application.isPlaying)
+            {
+                // In edit mode the Scene view is normally the camera the user manipulates, even
+                // after focus moves to the Hierarchy or Inspector. A focused Game view above is
+                // the explicit opt-in to sort from the Main camera instead.
+                var sceneView = SceneView.lastActiveSceneView;
+                if (sceneView)
+                    m_editorPreferredCpuSortCamera = sceneView.camera;
+            }
+
+            if (IsUsableCpuSortCamera(m_editorPreferredCpuSortCamera))
+                return m_editorPreferredCpuSortCamera;
+
+            m_editorPreferredCpuSortCamera = null;
+            return null;
+        }
+
+        static Camera FindGameCpuSortCamera()
+        {
+            var main = Camera.main;
+            if (IsUsableCpuSortCamera(main) && main.cameraType == CameraType.Game)
+                return main;
+
+            foreach (var camera in Camera.allCameras)
+                if (IsUsableCpuSortCamera(camera) && camera.cameraType == CameraType.Game)
+                    return camera;
+            return null;
+        }
+#endif
 
         public ISorterResource CreateSorterResource(uint count, GraphicsBuffer orderBuffer,
             Texture2D orderTexture = null)
@@ -919,71 +1034,74 @@ namespace Gsplat
         static CpuSortResult SortCpu(CpuSortRequest request, CpuSortWorkspace workspace,
             CancellationToken cancellationToken)
         {
-            var minDepth = float.PositiveInfinity;
-            var maxDepth = float.NegativeInfinity;
             for (var i = 0; i < request.Count; ++i)
             {
                 if ((i & k_cpuCancellationCheckMask) == 0)
                     cancellationToken.ThrowIfCancellationRequested();
-
-                var sourceId = request.SourceId(i);
-                var depth = request.Depth(request.Centers[sourceId]);
-                if (float.IsNaN(depth) || float.IsInfinity(depth))
-                    continue;
-                if (depth < minDepth) minDepth = depth;
-                if (depth > maxDepth) maxDepth = depth;
+                workspace.Order[i] = request.SourceId(i);
             }
 
-            Array.Clear(workspace.Histogram, 0, workspace.Histogram.Length);
-            var depthRange = maxDepth - minDepth;
-            if (float.IsInfinity(minDepth) || depthRange <= 1e-6f)
+            // Direct3D 11 and other wave-op-incompatible APIs use this CPU path. A stable LSD
+            // radix sort matches the GPU sort's two important properties: complete IEEE-754
+            // depth ordering and retention of source order when multiple centers have exactly
+            // the same view depth. SPARK half-float centers make those ties common at particular
+            // camera angles, where an unstable in-place partition produces localized artifacts.
+            var source = workspace.Order;
+            var destination = workspace.ScratchOrder;
+            for (var pass = 0; pass < k_cpuSortPasses; ++pass)
             {
+                Array.Clear(workspace.Histogram, 0, workspace.Histogram.Length);
+                var shift = pass * 8;
+
                 for (var i = 0; i < request.Count; ++i)
-                    workspace.Order[i] = request.SourceId(i);
-                return new CpuSortResult(request.Generation, request.Count);
+                {
+                    if ((i & k_cpuCancellationCheckMask) == 0)
+                        cancellationToken.ThrowIfCancellationRequested();
+                    var digit = DepthDigit(request, source[i], shift);
+                    workspace.Digits[i] = (byte)digit;
+                    workspace.Histogram[digit]++;
+                }
+
+                var offset = 0;
+                for (var digit = 0; digit < k_cpuSortRadix; ++digit)
+                {
+                    workspace.Offsets[digit] = offset;
+                    offset += workspace.Histogram[digit];
+                }
+
+                // Forward scattering makes every radix pass stable. Equal full-depth keys
+                // therefore remain in their imported/selected order instead of being shuffled.
+                for (var i = 0; i < request.Count; ++i)
+                {
+                    if ((i & k_cpuCancellationCheckMask) == 0)
+                        cancellationToken.ThrowIfCancellationRequested();
+                    var digit = workspace.Digits[i];
+                    destination[workspace.Offsets[digit]++] = source[i];
+                }
+
+                (source, destination) = (destination, source);
             }
 
-            var keyScale = (k_cpuSortKeyCount - 1) / (double)depthRange;
-            for (var i = 0; i < request.Count; ++i)
-            {
-                if ((i & k_cpuCancellationCheckMask) == 0)
-                    cancellationToken.ThrowIfCancellationRequested();
-
-                var sourceId = request.SourceId(i);
-                var depth = request.Depth(request.Centers[sourceId]);
-                int key;
-                if (float.IsNaN(depth) || float.IsPositiveInfinity(depth))
-                    key = k_cpuSortKeyCount - 1;
-                else if (float.IsNegativeInfinity(depth) || depth <= minDepth)
-                    key = 0;
-                else if (depth >= maxDepth)
-                    key = k_cpuSortKeyCount - 1;
-                else
-                    key = (int)((depth - minDepth) * keyScale);
-
-                workspace.Keys[i] = (ushort)key;
-                workspace.Histogram[key]++;
-            }
-
-            var offset = 0;
-            for (var key = 0; key < k_cpuSortKeyCount; ++key)
-            {
-                var count = workspace.Histogram[key];
-                workspace.Histogram[key] = offset;
-                offset += count;
-            }
-
-            // Unity view-space forward is -Z. Ascending view Z is therefore back-to-front.
-            // Iterating source IDs in order makes equal-key buckets stable.
-            for (var i = 0; i < request.Count; ++i)
-            {
-                if ((i & k_cpuCancellationCheckMask) == 0)
-                    cancellationToken.ThrowIfCancellationRequested();
-                var key = workspace.Keys[i];
-                workspace.Order[workspace.Histogram[key]++] = request.SourceId(i);
-            }
+            // Four byte passes leave the final result in the original Order array. Keep this
+            // defensive copy if the key width ever changes to an odd number of passes.
+            if (!ReferenceEquals(source, workspace.Order))
+                Array.Copy(source, workspace.Order, request.Count);
 
             return new CpuSortResult(request.Generation, request.Count);
+        }
+
+        static int DepthDigit(CpuSortRequest request, uint sourceId, int shift)
+        {
+            var depth = request.Depth(request.Centers[sourceId]);
+            // Invalid centers are rejected by package importers, but custom assets can still
+            // provide NaNs. Sort them to the near/end side instead of allowing NaN sign bits to
+            // place them unpredictably among valid splats.
+            if (float.IsNaN(depth))
+                depth = float.PositiveInfinity;
+            var bits = unchecked((uint)BitConverter.SingleToInt32Bits(depth));
+            var mask = unchecked((uint)-(int)(bits >> 31)) | 0x80000000u;
+            var sortable = bits ^ mask;
+            return (int)(sortable >> shift & 0xffu);
         }
     }
 }

@@ -39,9 +39,10 @@ namespace Gsplat
         GraphicsBuffer m_rendererOffsetsBuffer;
         GraphicsBuffer m_rendererTransformsBuffer;
         GraphicsBuffer m_rendererParamsBuffer;
+        GsplatRelighting m_relightingSource;
 
         // Per-renderer visual settings, looked up by renderer_id during the merged draw.
-        // Matches the RendererParams struct in GsplatSparkGlobal.hlsl (32-byte stride).
+        // Matches the RendererParams struct in GsplatSparkGlobal.hlsl (48-byte stride).
         [StructLayout(LayoutKind.Sequential)]
         struct RendererParams
         {
@@ -50,12 +51,16 @@ namespace Gsplat
             public uint GammaToLinear;
             public uint SHDegree;
             public uint Antialiased;
+            public uint RelightEnabled;
+            public float RelightBlend;
+            public float RelightBrightness;
+            public float RelightBackground;
             public uint Padding0;
             public uint Padding1;
             public uint Padding2;
         }
 
-        const int k_rendererParamsStride = 32;
+        const int k_rendererParamsStride = 48;
 
         // Scratch buffers for merge passes.
         // m_packScratch*   : immutable, concatenated per-renderer orders and depths.
@@ -125,6 +130,8 @@ namespace Gsplat
         static readonly int k_rendererParamsProp = Shader.PropertyToID("_RendererParams");
         static readonly int k_totalSplatCount = Shader.PropertyToID("_TotalSplatCount");
         static readonly int k_splatInstanceSize = Shader.PropertyToID("_SplatInstanceSize");
+        static readonly int k_relightMap = Shader.PropertyToID("_GsplatRelightMap");
+        static readonly int k_relightScreen = Shader.PropertyToID("_GsplatRelightScreen");
 
         public void InitGlobal(GsplatGlobalMaterial globalMaterial)
         {
@@ -351,11 +358,19 @@ namespace Gsplat
             var count = activeGsplats.Count;
             if (m_rendererParamsCache == null || m_rendererParamsCache.Length != count)
                 m_rendererParamsCache = new RendererParams[count];
+            m_relightingSource = null;
             for (int k = 0; k < count; k++)
             {
                 var gs = activeGsplats[k] as GsplatRenderer;
                 if (gs != null)
                 {
+                    bool relightingEnabled = gs.TryGetActiveRelighting(
+                        out var relighting,
+                        out float relightBlend,
+                        out float relightBrightness,
+                        out float relightBackground);
+                    if (relightingEnabled && !m_relightingSource)
+                        m_relightingSource = relighting;
                     m_rendererParamsCache[k] = new RendererParams
                     {
                         Brightness = gs.Brightness,
@@ -366,6 +381,10 @@ namespace Gsplat
                         // the max bands across the set).
                         SHDegree = (uint)Mathf.Min(gs.SHDegree, activeGsplats[k].SHBands),
                         Antialiased = gs.GsplatAsset && gs.GsplatAsset.Antialiased ? 1u : 0u,
+                        RelightEnabled = relightingEnabled ? 1u : 0u,
+                        RelightBlend = relightingEnabled ? relightBlend : 0f,
+                        RelightBrightness = relightingEnabled ? relightBrightness : 0f,
+                        RelightBackground = relightingEnabled ? relightBackground : 1f,
                     };
                 }
                 else
@@ -377,6 +396,7 @@ namespace Gsplat
                         GammaToLinear = 0u,
                         SHDegree = activeGsplats[k].SHBands,
                         Antialiased = 0u,
+                        RelightBackground = 1f,
                     };
                 }
             }
@@ -530,6 +550,14 @@ namespace Gsplat
             m_globalPropertyBlock.SetBuffer(k_rendererParamsProp, m_rendererParamsBuffer);
             m_globalPropertyBlock.SetInteger(k_totalSplatCount, (int)m_totalRemainingCount);
             m_globalPropertyBlock.SetInteger(k_splatInstanceSize, (int)GsplatSettings.Instance.SplatInstanceSize);
+            m_globalPropertyBlock.SetTexture(k_relightMap,
+                m_relightingSource && m_relightingSource.IsReady
+                    ? m_relightingSource.RelightingTexture
+                    : Texture2D.blackTexture);
+            m_globalPropertyBlock.SetVector(k_relightScreen,
+                m_relightingSource && m_relightingSource.IsReady
+                    ? m_relightingSource.SourceScreen
+                    : Vector4.zero);
 
             if (m_globalSHBands >= 1)
                 m_globalPropertyBlock.SetBuffer(k_globalSH1Buffer, m_globalSH1Buffer);
@@ -581,6 +609,7 @@ namespace Gsplat
             m_rendererTransformsBuffer = null;
             m_rendererParamsBuffer?.Dispose();
             m_rendererParamsBuffer = null;
+            m_relightingSource = null;
             // Scratch buffers are rebuilt every time global buffers are rebuilt,
             // so dispose them here too to avoid leaking when renderer count shrinks.
             m_packScratchOrders?.Dispose();

@@ -40,6 +40,9 @@ namespace Gsplat
         static readonly int k_brightness = Shader.PropertyToID("_Brightness");
         static readonly int k_scaleFactor = Shader.PropertyToID("_ScaleFactor");
         static readonly int k_antialiased = Shader.PropertyToID("_Antialiased");
+        static readonly int k_relightMap = Shader.PropertyToID("_GsplatRelightMap");
+        static readonly int k_relightScreen = Shader.PropertyToID("_GsplatRelightScreen");
+        static readonly int k_relightParams = Shader.PropertyToID("_GsplatRelightParams");
 
         uint m_framesBeforeRecomputeSort = 0;
         uint m_sortsBeforeRecomputeCutouts = 0;
@@ -420,7 +423,9 @@ namespace Gsplat
         /// <param name="scaleFactor">Splats uv scaling factor, reduce splat size while trying to keep visual fidelity.</param>
         /// <param name="renderOrder">Manual render order placement of the gsplat. The final value is capped by the maximum render order setting.</param>
         public void Render(Transform transform, int layer, bool gammaToLinear = false, int shDegree = 3,
-            float brightness = 1.0f, float scaleFactor = 1.0f, uint renderOrder = 0)
+            float brightness = 1.0f, float scaleFactor = 1.0f, uint renderOrder = 0,
+            GsplatRelighting relighting = null, float relightingBlend = 1f,
+            float relightingBrightness = 2f, float relightingBackground = 1f)
         {
             if (m_remainingCount <= 0)
                 return;
@@ -433,6 +438,24 @@ namespace Gsplat
             m_propertyBlock.SetFloat(k_scaleFactor, scaleFactor);
             m_propertyBlock.SetInteger(k_antialiased, m_gsplatAsset.Antialiased ? 1 : 0);
             m_propertyBlock.SetMatrix(k_matrixM, transform.localToWorldMatrix);
+            if (relighting && relighting.IsReady)
+            {
+                m_propertyBlock.SetTexture(k_relightMap, relighting.RelightingTexture);
+                m_propertyBlock.SetVector(k_relightScreen, relighting.SourceScreen);
+                m_propertyBlock.SetVector(k_relightParams, new Vector4(
+                    relightingBlend,
+                    relightingBrightness,
+                    relightingBackground,
+                    1f));
+            }
+            else
+            {
+                // Always bind a valid texture because some mobile drivers validate sampler
+                // bindings even when the dynamic relighting branch is disabled.
+                m_propertyBlock.SetTexture(k_relightMap, Texture2D.blackTexture);
+                m_propertyBlock.SetVector(k_relightScreen, Vector4.zero);
+                m_propertyBlock.SetVector(k_relightParams, Vector4.zero);
+            }
 
             uint order = Math.Clamp(renderOrder, 0, GsplatSettings.Instance.MaxRenderOrder - 1);
             var rp = new RenderParams(m_gsplatAsset.Materials[order])

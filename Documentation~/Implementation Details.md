@@ -40,11 +40,11 @@ Cross-renderer sorting is enabled by default. When every active renderer satisfi
 
 ### CPU fallback
 
-Direct3D 11, OpenGL Core, OpenGL ES, and native devices without the required GPU features use an asynchronous 16-bit counting sort. Native CPU-fallback platforms upload the order to a graphics buffer while the portable texture path uploads it as RGBA8 sampled data.
+Direct3D 11, OpenGL Core, OpenGL ES, and native devices without the required GPU features use an asynchronous stable, full-precision radix sort. Native CPU-fallback platforms upload the order to a graphics buffer while the portable texture path uploads it as RGBA8 sampled data.
 
-WebGL 2 cannot use the worker-based native implementation, compute shaders, or structured buffers, so it performs the counting sort on Unity's main thread and renders entirely from sampled textures.
+WebGL 2 cannot use the worker-based native implementation, compute shaders, or structured buffers, so it performs the same radix sort on Unity's main thread and renders entirely from sampled textures.
 
-Global merge and compute cutouts are disabled during CPU fallback. Each renderer retains one current order, prioritizing a game camera when several cameras request different viewpoints.
+Global merge and compute cutouts are disabled during CPU fallback. Each renderer retains one current order; in the Editor, the active Scene or Game viewport selects the camera used for that order.
 
 ## Cutouts and active source ranges
 

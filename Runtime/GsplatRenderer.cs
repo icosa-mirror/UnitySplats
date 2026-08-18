@@ -9,6 +9,7 @@ using UnityEditor;
 #endif
 using UnityEngine;
 using UnityEngine.Rendering;
+using UnityEngine.Serialization;
 
 namespace Gsplat
 {
@@ -59,12 +60,22 @@ namespace Gsplat
             "Recalculates the renderer bounds after compute cutouts so Unity can cull the surviving splats more tightly. This is costly when cutouts move frequently.")]
         public bool CutoutsUpdateBounds = true;
 
+        // Retained only so scenes authored with the earlier camera-assignment workflow continue
+        // to render. New content discovers GsplatProxyRelighting directly on a proxy child.
+        [FormerlySerializedAs("RelightingEnabled")]
+        [SerializeField, HideInInspector] bool m_legacyRelightingEnabled;
+        [FormerlySerializedAs("RelightingProxy")]
+        [SerializeField, HideInInspector] Transform m_legacyRelightingProxy;
+        [FormerlySerializedAs("RelightingSource")]
+        [SerializeField, HideInInspector] GsplatRelighting m_legacyRelightingSource;
+
         GsplatAsset m_prevAsset;
         GsplatRendererImpl m_renderer;
         GsplatActiveRange[] m_activeRanges;
         IReadOnlyList<GsplatActiveRange> m_activeRangesView;
         uint[] m_activeSourceIds;
         GsplatAsset m_activeRangesAsset;
+        GsplatProxyRelighting m_proxyRelighting;
 
         sealed class ActiveRangeOffsetComparer : IComparer<GsplatActiveRange>
         {
@@ -101,6 +112,49 @@ namespace Gsplat
         public GsplatResource GsplatResource => m_renderer?.GsplatResource;
         public byte SHBands => GsplatAsset?.SHBands ?? 0;
 
+        /// <summary>
+        /// Gets the active camera-level relighting source for this renderer.
+        /// </summary>
+        public bool TryGetActiveRelighting(out GsplatRelighting relighting)
+        {
+            return TryGetActiveRelighting(out relighting, out _, out _, out _);
+        }
+
+        internal bool TryGetActiveRelighting(
+            out GsplatRelighting relighting,
+            out float blend,
+            out float brightness,
+            out float background)
+        {
+            GsplatProxyRelighting proxy = ResolveProxyRelighting();
+            if (proxy && proxy.TryGetRelightingSource(out relighting))
+            {
+                blend = proxy.Blend;
+                brightness = proxy.Brightness;
+                background = proxy.Background;
+                return true;
+            }
+
+            // Compatibility fallback for scenes configured before proxy-child relighting.
+            relighting = m_legacyRelightingSource;
+            blend = relighting ? relighting.Blend : 0f;
+            brightness = relighting ? relighting.Brightness : 0f;
+            background = relighting ? relighting.Background : 1f;
+            return m_legacyRelightingEnabled && m_legacyRelightingProxy && relighting &&
+                   relighting.IsReady;
+        }
+
+        GsplatProxyRelighting ResolveProxyRelighting()
+        {
+            if (m_proxyRelighting && m_proxyRelighting.transform != transform &&
+                m_proxyRelighting.transform.IsChildOf(transform))
+                return m_proxyRelighting;
+
+            m_proxyRelighting = GetComponentInChildren<GsplatProxyRelighting>(false);
+            if (m_proxyRelighting && m_proxyRelighting.transform == transform)
+                m_proxyRelighting = null;
+            return m_proxyRelighting;
+        }
 
         public uint RemainingCount
         {
@@ -176,14 +230,25 @@ namespace Gsplat
         {
             if (!Valid)
                 return;
+            if (!TryGetActiveRelighting(out var relighting, out float relightBlend,
+                    out float relightBrightness, out float relightBackground))
+                relighting = null;
             m_renderer.Render(transform, gameObject.layer, GammaToLinear, SHDegree, Brightness,
-                1.0f - SplatDownscaleFactor, RenderOrder);
+                1.0f - SplatDownscaleFactor, RenderOrder, relighting,
+                relightBlend, relightBrightness, relightBackground);
         }
 
         void OnEnable()
         {
+            m_proxyRelighting = null;
             GsplatSorter.Instance.RegisterGsplat(this);
             m_prevAsset = null;
+        }
+
+        void OnTransformChildrenChanged()
+        {
+            m_proxyRelighting = null;
+            ForceRefresh();
         }
 
         void OnDisable()

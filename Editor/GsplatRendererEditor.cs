@@ -176,5 +176,6 @@ namespace Gsplat.Editor
                 EditorUtility.SetDirty(boxCollider);
             }
         }
+
     }
 }

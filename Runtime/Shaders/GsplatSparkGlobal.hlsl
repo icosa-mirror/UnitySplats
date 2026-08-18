@@ -32,7 +32,7 @@ StructuredBuffer<uint4>    _GlobalSH4Buffer;
 StructuredBuffer<uint>     _RendererOffsets;    // splat start index in global buffers, per renderer
 StructuredBuffer<float4x4> _RendererTransforms; // localToWorldMatrix, per renderer
 
-// Per-renderer visual settings, looked up by renderer_id. Matches the 32-byte
+// Per-renderer visual settings, looked up by renderer_id. Matches the 48-byte
 // RendererParams layout in GsplatGlobalRenderer.cs.
 struct RendererParams
 {
@@ -41,6 +41,10 @@ struct RendererParams
     uint  gammaToLinear;
     uint  shDegree;
     uint  antialiased;
+    uint  relightEnabled;
+    float relightBlend;
+    float relightBrightness;
+    float relightBackground;
     uint  padding0;
     uint  padding1;
     uint  padding2;
