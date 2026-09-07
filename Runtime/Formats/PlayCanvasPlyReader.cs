@@ -442,6 +442,7 @@ namespace Gsplat
                 ToFiniteFloat(values[yIndex], "y", splat) * transform.PositionY,
                 ToFiniteFloat(values[zIndex], "z", splat) * transform.PositionZ);
             Encapsulate(ref bounds, ref hasBounds, position);
+            if (writer.BoundsOnly) return;
 
             var dcAndOpacity = new Vector4(
                 ToFiniteFloat(values[dc0Index], "f_dc_0", splat),
@@ -514,6 +515,7 @@ namespace Gsplat
                 ToFiniteFloat(values.Read(yIndex), "y", splat) * transform.PositionY,
                 ToFiniteFloat(values.Read(zIndex), "z", splat) * transform.PositionZ);
             Encapsulate(ref bounds, ref hasBounds, position);
+            if (writer.BoundsOnly) return;
 
             var dcAndOpacity = new Vector4(
                 ToFiniteFloat(values.Read(dc0Index), "f_dc_0", splat),

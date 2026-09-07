@@ -49,6 +49,8 @@ namespace Gsplat
         [HideInInspector] public uint[] PackedSH4;
         [HideInInspector] public uint4[] PackedSplats;
 
+        internal GsplatImportContext ImportContext;
+
         static readonly int k_packedSplatsBuffer = Shader.PropertyToID("_PackedSplatsBuffer");
         static readonly int k_packedSH1Buffer = Shader.PropertyToID("_PackedSH1Buffer");
         static readonly int k_packedSH2Buffer = Shader.PropertyToID("_PackedSH2Buffer");
@@ -90,11 +92,16 @@ namespace Gsplat
         internal sealed class RawStreamingWriter
         {
             readonly GsplatAssetSpark m_Asset;
+            readonly GsplatImportContext m_Context;
+            readonly GsplatImportBuffer m_Buffer;
+            internal bool BoundsOnly => m_Context?.BoundsOnly ?? false;
             readonly float[] m_ShBandData = new float[9 * 3];
 
             internal RawStreamingWriter(GsplatAssetSpark asset)
             {
                 m_Asset = asset;
+                m_Context = asset.ImportContext;
+                m_Buffer = m_Context?.CreateBuffer(asset.SHBands);
             }
 
             internal void Write(
@@ -105,6 +112,14 @@ namespace Gsplat
                 Vector4 dcAndOpacityLogit,
                 ReadOnlySpan<Vector3> shCoefficients)
             {
+                if (BoundsOnly) return;
+                if (m_Context != null && m_Context.Removes(logScale, dcAndOpacityLogit.w)) return;
+                if (m_Buffer != null) index = m_Buffer.Append(index);
+                uint4[] splats = m_Buffer?.Splats ?? m_Asset.PackedSplats;
+                uint[] sh1 = m_Buffer?.SH1 ?? m_Asset.PackedSH1;
+                uint[] sh2 = m_Buffer?.SH2 ?? m_Asset.PackedSH2;
+                uint[] sh3 = m_Buffer?.SH3 ?? m_Asset.PackedSH3;
+                uint[] sh4 = m_Buffer?.SH4 ?? m_Asset.PackedSH4;
                 for (int band = 1, coefficientOffset = 0; band <= m_Asset.SHBands; ++band)
                 {
                     int bandSize = band * 2 + 1;
@@ -116,17 +131,17 @@ namespace Gsplat
                         m_ShBandData[coefficient * 3 + 2] = value.z;
                     }
 
-                    if (band == 1) PackSH1(m_ShBandData, m_Asset.PackedSH1.AsSpan(index * 2, 2));
-                    if (band == 2) PackSH2(m_ShBandData, m_Asset.PackedSH2.AsSpan(index * 4, 4));
-                    if (band == 3) PackSH3(m_ShBandData, m_Asset.PackedSH3.AsSpan(index * 4, 4));
-                    if (band == 4) PackSH4(m_ShBandData, m_Asset.PackedSH4.AsSpan(index * 4, 4));
+                    if (band == 1) PackSH1(m_ShBandData, sh1.AsSpan(index * 2, 2));
+                    if (band == 2) PackSH2(m_ShBandData, sh2.AsSpan(index * 4, 4));
+                    if (band == 3) PackSH3(m_ShBandData, sh3.AsSpan(index * 4, 4));
+                    if (band == 4) PackSH4(m_ShBandData, sh4.AsSpan(index * 4, 4));
                     coefficientOffset += bandSize;
                 }
 
                 // Quaternion is a four-component WXYZ carrier for the Spark packer.
                 var rotation = new Quaternion(
                     rotationWxyz.x, rotationWxyz.y, rotationWxyz.z, rotationWxyz.w);
-                m_Asset.PackedSplats[index] =
+                splats[index] =
                     PackSplat(dcAndOpacityLogit, position, logScale, rotation);
             }
         }
@@ -139,21 +154,45 @@ namespace Gsplat
                 throw new ArgumentOutOfRangeException(nameof(shBands));
 
             SplatCount = checked((uint)count);
+            if (ImportContext != null) ImportContext.SourceCount = count;
             SHBands = shBands;
             Antialiased = antialiased;
-            Allocate();
+            if (ImportContext == null) Allocate();
             return new RawStreamingWriter(this);
         }
 
         internal void FinishRawStreamingLoad(Bounds bounds)
         {
-            Bounds = bounds;
+            Bounds = ImportContext?.SourceBounds ?? bounds;
+            if (ImportContext != null && !ImportContext.BoundsOnly) ImportContext.Complete(this);
+            ImportContext = null;
         }
 
         public override void LoadFromDecoded(GsplatDecodedData data, ProgressCallback progressCallback = null)
         {
             if (data == null) throw new ArgumentNullException(nameof(data));
             data.Validate();
+            if (ImportContext != null)
+            {
+                var writer = BeginRawStreamingLoad(data.Count, data.SHBands, data.Antialiased);
+                if (!writer.BoundsOnly)
+                {
+                    int shCount = GsplatUtils.SHBandsToCoefficientCount(data.SHBands);
+                    for (int i = 0; i < data.Count; ++i)
+                    {
+                        Vector4 color = data.Colors[i];
+                        float alpha = Mathf.Clamp(color.w, 1e-6f, 1f - 1e-6f);
+                        color.w = Mathf.Log(alpha / (1f - alpha));
+                        Vector3 scale = data.Scales[i];
+                        var logScale = new Vector3(Mathf.Log(Mathf.Max(scale.x, 1e-30f)),
+                            Mathf.Log(Mathf.Max(scale.y, 1e-30f)), Mathf.Log(Mathf.Max(scale.z, 1e-30f)));
+                        writer.Write(i, data.Positions[i], logScale, data.Rotations[i], color,
+                            data.SHs.AsSpan(i * shCount, shCount));
+                    }
+                }
+                FinishRawStreamingLoad(data.Bounds);
+                return;
+            }
             SplatCount = checked((uint)data.Count);
             SHBands = data.SHBands;
             Antialiased = data.Antialiased;

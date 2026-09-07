@@ -29,14 +29,26 @@ namespace Gsplat
             string path,
             CompressionMode compression = CompressionMode.Spark,
             SourceCoordinates sourceCoordinates = SourceCoordinates.Unspecified,
-            ProgressCallback progress = null)
+            ProgressCallback progress = null,
+            GsplatImportFilter filter = null,
+            string boundsCacheDirectory = null)
         {
             if (string.IsNullOrWhiteSpace(path))
                 throw new ArgumentException("A splat file path is required.", nameof(path));
-
             using var stream = File.OpenRead(path);
-            GsplatAsset asset = Load(stream, FormatFromPath(path), compression, sourceCoordinates, progress);
+            var info = new FileInfo(path);
+            long length = info.Length;
+            long timestamp = info.LastWriteTimeUtc.Ticks;
+            GsplatFileFormat format = FormatFromPath(path);
+            SourceCoordinates coordinates = ResolveCoordinates(format, sourceCoordinates);
+            string cache = boundsCacheDirectory ?? Path.Combine(Application.persistentDataPath, "GsplatBounds");
+            bool cached = GsplatBoundsCache.TryRead(path, coordinates, cache, out Bounds bounds);
+            if (filter != null)
+                Debug.Log($"[SPLAT_PRUNE_20260907] Bounds cache {(cached ? "hit" : "miss")} for '{path}'.");
+            GsplatAsset asset = Load(stream, format, compression, coordinates, progress, filter,
+                cached ? bounds : (Bounds?)null);
             asset.name = Path.GetFileNameWithoutExtension(path);
+            GsplatBoundsCache.Write(path, coordinates, cache, length, timestamp, asset.Bounds);
             return asset;
         }
 
@@ -45,12 +57,14 @@ namespace Gsplat
             GsplatFileFormat format = GsplatFileFormat.Auto,
             CompressionMode compression = CompressionMode.Spark,
             SourceCoordinates sourceCoordinates = SourceCoordinates.Unspecified,
-            ProgressCallback progress = null)
+            ProgressCallback progress = null,
+            GsplatImportFilter filter = null,
+            Bounds? sourceBounds = null)
         {
             if (bytes == null)
                 throw new ArgumentNullException(nameof(bytes));
             using var stream = new MemoryStream(bytes, false);
-            return Load(stream, format, compression, sourceCoordinates, progress);
+            return Load(stream, format, compression, sourceCoordinates, progress, filter, sourceBounds);
         }
 
         public static GsplatAsset Load(
@@ -58,9 +72,11 @@ namespace Gsplat
             string extensionOrFormat,
             CompressionMode compression = CompressionMode.Spark,
             SourceCoordinates sourceCoordinates = SourceCoordinates.Unspecified,
-            ProgressCallback progress = null)
+            ProgressCallback progress = null,
+            GsplatImportFilter filter = null,
+            Bounds? sourceBounds = null)
         {
-            return Load(bytes, ParseFormat(extensionOrFormat), compression, sourceCoordinates, progress);
+            return Load(bytes, ParseFormat(extensionOrFormat), compression, sourceCoordinates, progress, filter, sourceBounds);
         }
 
         public static GsplatAsset Load(
@@ -68,7 +84,9 @@ namespace Gsplat
             GsplatFileFormat format = GsplatFileFormat.Auto,
             CompressionMode compression = CompressionMode.Spark,
             SourceCoordinates sourceCoordinates = SourceCoordinates.Unspecified,
-            ProgressCallback progress = null)
+            ProgressCallback progress = null,
+            GsplatImportFilter filter = null,
+            Bounds? sourceBounds = null)
         {
             if (stream == null)
                 throw new ArgumentNullException(nameof(stream));
@@ -97,25 +115,21 @@ namespace Gsplat
                 try
                 {
                     asset.name = $"Runtime {format} Gsplat";
-                    if (asset is GsplatAssetSpark spark && format == GsplatFileFormat.Ply)
+                    if (filter != null && asset is GsplatAssetSpark spark)
                     {
-                        PlayCanvasPlyReader.ReadIntoSpark(input, spark, coordinates, progress);
+                        if (!sourceBounds.HasValue)
+                        {
+                            progress?.Invoke("Scanning source splat bounds", 0f);
+                            spark.ImportContext = new GsplatImportContext();
+                            ReadAsset(input, format, coordinates, progress, asset, null, null);
+                            sourceBounds = asset.Bounds;
+                            input.Position = 0;
+                        }
+                        spark.ImportContext = new GsplatImportContext(filter, sourceBounds.Value);
                     }
-                    else if (asset is GsplatAssetSpark spzSpark && format == GsplatFileFormat.Spz)
-                    {
-                        PlayCanvasSpzReader.ReadIntoSpark(input, spzSpark, coordinates, progress);
-                    }
-                    else if (asset is GsplatAssetSpark sogSpark && format == GsplatFileFormat.Sog)
-                    {
-                        PlayCanvasSogReader.ReadBundleIntoSpark(input, sogSpark, coordinates, progress);
-                    }
-                    else
-                    {
-                        GsplatDecodedData decoded = Decode(
-                            input, format, coordinates, progress);
-                        progress?.Invoke("Packing Unity splat asset", 0f);
-                        asset.LoadFromDecoded(decoded, progress);
-                    }
+                    ReadAsset(input, format, coordinates, progress, asset, filter, sourceBounds);
+                    if (filter != null && asset.SplatCount == 0)
+                        throw new InvalidDataException("The splat filter left no splats. Lower MaxOpacity or increase MinScaleFraction.");
                     progress?.Invoke("Gaussian splat ready", 1f);
                     return asset;
                 }
@@ -140,7 +154,9 @@ namespace Gsplat
             Func<string, byte[]> resolveFile,
             CompressionMode compression = CompressionMode.Spark,
             SourceCoordinates sourceCoordinates = SourceCoordinates.Unspecified,
-            ProgressCallback progress = null)
+            ProgressCallback progress = null,
+            GsplatImportFilter filter = null,
+            Bounds? sourceBounds = null)
         {
             SourceCoordinates coordinates = ResolveCoordinates(GsplatFileFormat.Sog, sourceCoordinates);
             GsplatAsset asset = CreateAsset(compression);
@@ -149,15 +165,27 @@ namespace Gsplat
                 asset.name = "Runtime SOG Gsplat";
                 if (asset is GsplatAssetSpark spark)
                 {
-                    PlayCanvasSogReader.ReadUnpackedIntoSpark(
-                        metadata, resolveFile, spark, coordinates, progress);
+                    if (filter != null)
+                    {
+                        if (!sourceBounds.HasValue)
+                        {
+                            spark.ImportContext = new GsplatImportContext();
+                            PlayCanvasSogReader.ReadUnpackedIntoSpark(metadata, resolveFile, spark, coordinates, progress);
+                            sourceBounds = spark.Bounds;
+                        }
+                        spark.ImportContext = new GsplatImportContext(filter, sourceBounds.Value);
+                    }
+                    PlayCanvasSogReader.ReadUnpackedIntoSpark(metadata, resolveFile, spark, coordinates, progress);
                 }
                 else
                 {
                     GsplatDecodedData decoded = PlayCanvasSogReader.ReadUnpacked(
                         metadata, resolveFile, coordinates, progress);
+                    filter?.Apply(decoded, sourceBounds ?? decoded.Bounds);
                     asset.LoadFromDecoded(decoded, progress);
                 }
+                if (filter != null && asset.SplatCount == 0)
+                    throw new InvalidDataException("The splat filter left no splats. Lower MaxOpacity or increase MinScaleFraction.");
                 return asset;
             }
             catch
@@ -167,6 +195,23 @@ namespace Gsplat
                 else
                     UnityEngine.Object.DestroyImmediate(asset);
                 throw;
+            }
+        }
+
+        static void ReadAsset(Stream input, GsplatFileFormat format, SourceCoordinates coordinates,
+            ProgressCallback progress, GsplatAsset asset, GsplatImportFilter filter, Bounds? sourceBounds)
+        {
+            if (asset is GsplatAssetSpark spark && format == GsplatFileFormat.Ply)
+                PlayCanvasPlyReader.ReadIntoSpark(input, spark, coordinates, progress);
+            else if (asset is GsplatAssetSpark spz && format == GsplatFileFormat.Spz)
+                PlayCanvasSpzReader.ReadIntoSpark(input, spz, coordinates, progress);
+            else if (asset is GsplatAssetSpark sog && format == GsplatFileFormat.Sog)
+                PlayCanvasSogReader.ReadBundleIntoSpark(input, sog, coordinates, progress);
+            else
+            {
+                GsplatDecodedData decoded = Decode(input, format, coordinates, progress);
+                if (!(asset is GsplatAssetSpark)) filter?.Apply(decoded, sourceBounds ?? decoded.Bounds);
+                asset.LoadFromDecoded(decoded, progress);
             }
         }
 
