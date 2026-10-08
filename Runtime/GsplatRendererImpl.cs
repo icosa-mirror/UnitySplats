@@ -590,7 +590,8 @@ namespace Gsplat
                 relighting, relightingBlend, relightingBrightness, relightingBackground);
 
             uint order = Math.Clamp(renderOrder, 0, GsplatSettings.Instance.MaxRenderOrder - 1);
-            var rp = new RenderParams(m_gsplatAsset.Materials[order])
+            var rp = new RenderParams(m_gsplatAsset.GsplatMaterial.GetColorMaterial(
+                m_gsplatAsset.SHBands, order, relighting && relighting.IsReady))
             {
                 worldBounds = GsplatUtils.CalcWorldBounds(m_bounds, transform),
                 matProps = m_propertyBlock,
@@ -613,7 +614,9 @@ namespace Gsplat
                 relighting, relightingBlend, relightingBrightness, relightingBackground);
             uint order = Math.Clamp(renderOrder, 0, GsplatSettings.Instance.MaxRenderOrder - 1);
             int instances = Mathf.CeilToInt(m_remainingCount / (float)GsplatSettings.Instance.SplatInstanceSize);
-            cmd.DrawMeshInstancedProcedural(GsplatSettings.Instance.Mesh, 0, m_gsplatAsset.Materials[order], 0,
+            cmd.DrawMeshInstancedProcedural(GsplatSettings.Instance.Mesh, 0,
+                m_gsplatAsset.GsplatMaterial.GetColorMaterial(
+                    m_gsplatAsset.SHBands, order, relighting && relighting.IsReady), 0,
                 instances, m_propertyBlock);
         }
 
@@ -646,7 +649,9 @@ namespace Gsplat
                 relighting, relightingBlend, relightingBrightness, relightingBackground);
             uint order = Math.Clamp(renderOrder, 0, GsplatSettings.Instance.MaxRenderOrder - 1);
             int instances = Mathf.CeilToInt(m_remainingCount / (float)GsplatSettings.Instance.SplatInstanceSize);
-            cmd.DrawMeshInstancedProcedural(GsplatSettings.Instance.Mesh, 0, m_gsplatAsset.Materials[order], 0,
+            cmd.DrawMeshInstancedProcedural(GsplatSettings.Instance.Mesh, 0,
+                m_gsplatAsset.GsplatMaterial.GetColorMaterial(
+                    m_gsplatAsset.SHBands, order, relighting && relighting.IsReady), 0,
                 instances, m_propertyBlock);
         }
 

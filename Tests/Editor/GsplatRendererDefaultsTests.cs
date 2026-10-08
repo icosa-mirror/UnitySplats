@@ -11,6 +11,48 @@ namespace Gsplat.Tests
 {
     public class GsplatRendererDefaultsTests
     {
+        [TestCase(false)]
+        [TestCase(true)]
+        public void RelitAndNonRelitDrawsKeepIndependentMaterialKeywords(bool global)
+        {
+            var shader = Shader.Find(global ? "Gsplat/Global" : "Gsplat/Standard");
+            Assert.IsNotNull(shader);
+            var source = new Material(shader);
+            var individual = ScriptableObject.CreateInstance<GsplatMaterial>();
+            var merged = ScriptableObject.CreateInstance<GsplatGlobalMaterial>();
+            Material relit = null;
+            try
+            {
+                // Even a template with relighting enabled must produce an unlit default.
+                source.EnableKeyword(GsplatUtils.k_RelightingKeyword);
+                individual.DefaultMaterial = source;
+                merged.DefaultMaterial = source;
+                var unlit = global ? merged.GetColorMaterial(0, false) : individual.GetColorMaterial(0, 0, false);
+                relit = global ? merged.GetColorMaterial(0, true) : individual.GetColorMaterial(0, 0, true);
+                var nextUnlit = global ? merged.GetColorMaterial(0, false) : individual.GetColorMaterial(0, 0, false);
+                Assert.AreSame(unlit, nextUnlit);
+                Assert.AreNotSame(unlit, relit);
+                Assert.IsFalse(unlit.IsKeywordEnabled(GsplatUtils.k_RelightingKeyword));
+                Assert.IsTrue(relit.IsKeywordEnabled(GsplatUtils.k_RelightingKeyword));
+                Assert.AreEqual(unlit.renderQueue, relit.renderQueue);
+                Assert.IsTrue(relit.IsKeywordEnabled("SH_BANDS_0"));
+            }
+            finally
+            {
+                Object.DestroyImmediate(relit);
+                if (global)
+                    foreach (var material in merged.Materials)
+                        Object.DestroyImmediate(material);
+                else
+                    foreach (var band in individual.Materials)
+                        foreach (var material in band)
+                            Object.DestroyImmediate(material);
+                Object.DestroyImmediate(individual);
+                Object.DestroyImmediate(merged);
+                Object.DestroyImmediate(source);
+            }
+        }
+
         [Test]
         public void NewRendererEnablesGammaToLinear()
         {

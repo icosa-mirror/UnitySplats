@@ -21,6 +21,7 @@ Shader "Gsplat/Standard"
             HLSLPROGRAM
             #pragma vertex vert
             #pragma fragment frag
+            #pragma multi_compile_local __ GSPLAT_RELIGHTING
             // The structured-buffer variant needs shader model 4.5. The texture variant targets
             // shader model 3.5 so it remains available to GLES3 and Unity WebGL 2 players.
             #pragma target 4.5 GSPLAT_VERTEX_BUFFERS
@@ -188,6 +189,7 @@ Shader "Gsplat/Standard"
 
                 if (alpha < 1.0 / 255.0) discard;
                 float3 color = _GammaToLinear ? GammaToLinearSpace(i.color.rgb) : i.color.rgb;
+                #if defined(GSPLAT_RELIGHTING)
                 if (_GsplatRelightParams.w > 0.5)
                 {
                     // The normal Game-camera map and dimensions travel with the queued draw.
@@ -214,6 +216,7 @@ Shader "Gsplat/Standard"
                         lit.a);
                     color = lerp(color, color * factor, _GsplatRelightParams.x);
                 }
+                #endif
                 return float4(color * alpha * _Brightness, alpha);
             }
             ENDHLSL

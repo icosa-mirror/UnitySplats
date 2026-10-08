@@ -26,6 +26,7 @@ Shader "Gsplat/Global"
             HLSLPROGRAM
             #pragma vertex vert
             #pragma fragment frag
+            #pragma multi_compile_local __ GSPLAT_RELIGHTING
             #pragma require compute
             #pragma multi_compile SH_BANDS_0 SH_BANDS_1 SH_BANDS_2 SH_BANDS_3 SH_BANDS_4
 
@@ -143,6 +144,7 @@ Shader "Gsplat/Global"
 
                 if (alpha < 1.0 / 255.0) discard;
                 float3 color = p.gammaToLinear ? GammaToLinearSpace(i.color.rgb) : i.color.rgb;
+                #if defined(GSPLAT_RELIGHTING)
                 if (p.relightEnabled != 0u)
                 {
                     bool useCameraOverride =
@@ -165,6 +167,7 @@ Shader "Gsplat/Global"
                         lit.a);
                     color = lerp(color, color * factor, p.relightBlend);
                 }
+                #endif
                 return float4(color * alpha * p.brightness, alpha);
             }
             ENDHLSL

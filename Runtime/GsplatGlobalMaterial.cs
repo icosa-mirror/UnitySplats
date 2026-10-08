@@ -8,6 +8,24 @@ namespace Gsplat
     [CreateAssetMenu(menuName = "Gsplat/Gsplat Global Material")]
     public class GsplatGlobalMaterial : ScriptableObject
     {
+        Material[] m_relightingMaterials;
+
+        // Separate instances keep queued relit and non-relit draws from changing each other's keywords.
+        public Material GetColorMaterial(int shBands, bool relighting)
+        {
+            var unlit = Materials[shBands];
+            if (!relighting)
+                return unlit;
+
+            m_relightingMaterials ??= new Material[5];
+            if (!m_relightingMaterials[shBands])
+            {
+                m_relightingMaterials[shBands] = new Material(unlit);
+                m_relightingMaterials[shBands].EnableKeyword(GsplatUtils.k_RelightingKeyword);
+            }
+            return m_relightingMaterials[shBands];
+        }
+
         public Material DefaultMaterial;
         public Material DefaultDepthMaterial;
         public ComputeShader MergeShader;
@@ -31,6 +49,7 @@ namespace Gsplat
                 for (int i = 0; i < 5; i++)
                 {
                     m_materials[i] = new Material(DefaultMaterial);
+                    m_materials[i].DisableKeyword(GsplatUtils.k_RelightingKeyword);
                     m_materials[i].DisableKeyword("SH_BANDS_0");
                     m_materials[i].DisableKeyword("SH_BANDS_1");
                     m_materials[i].DisableKeyword("SH_BANDS_2");
@@ -76,6 +95,7 @@ namespace Gsplat
 
         public void Reset()
         {
+            m_relightingMaterials = null;
             m_materials = null;
             m_depthMaterials = null;
         }

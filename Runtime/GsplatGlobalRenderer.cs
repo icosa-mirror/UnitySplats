@@ -541,7 +541,7 @@ namespace Gsplat
 
             int instances = Mathf.CeilToInt(m_totalRemainingCount / (float)GsplatSettings.Instance.SplatInstanceSize);
             cmd.DrawMeshInstancedProcedural(GsplatSettings.Instance.Mesh, 0,
-                m_globalMaterial.Materials[m_globalSHBands], 0, instances, m_globalPropertyBlock);
+                m_globalMaterial.GetColorMaterial(m_globalSHBands, m_relightingSource && m_relightingSource.IsReady), 0, instances, m_globalPropertyBlock);
         }
 
         public void RenderDepth(CommandBuffer cmd)
@@ -563,7 +563,7 @@ namespace Gsplat
 
             int instances = Mathf.CeilToInt(m_totalRemainingCount / (float)GsplatSettings.Instance.SplatInstanceSize);
             cmd.DrawMeshInstancedProcedural(GsplatSettings.Instance.Mesh, 0,
-                m_globalMaterial.Materials[m_globalSHBands], 0, instances, m_globalPropertyBlock);
+                m_globalMaterial.GetColorMaterial(m_globalSHBands, m_relightingSource && m_relightingSource.IsReady), 0, instances, m_globalPropertyBlock);
         }
 
         public void RenderDepth(RasterCommandBuffer cmd)

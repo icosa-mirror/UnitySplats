@@ -8,6 +8,25 @@ namespace Gsplat
     [CreateAssetMenu(menuName = "Gsplat/Gsplat Material")]
     public class GsplatMaterial : ScriptableObject
     {
+        Material[][] m_relightingMaterials;
+
+        // Separate instances keep queued relit and non-relit draws from changing each other's keywords.
+        public Material GetColorMaterial(int shBands, uint renderOrder, bool relighting)
+        {
+            var unlit = Materials[shBands][renderOrder];
+            if (!relighting)
+                return unlit;
+
+            m_relightingMaterials ??= new Material[5][];
+            m_relightingMaterials[shBands] ??= new Material[GsplatSettings.Instance.MaxRenderOrder];
+            if (!m_relightingMaterials[shBands][renderOrder])
+            {
+                m_relightingMaterials[shBands][renderOrder] = new Material(unlit);
+                m_relightingMaterials[shBands][renderOrder].EnableKeyword(GsplatUtils.k_RelightingKeyword);
+            }
+            return m_relightingMaterials[shBands][renderOrder];
+        }
+
         public Material DefaultMaterial;
         public Material DefaultDepthMaterial;
         private Material[][] m_material;
@@ -15,6 +34,7 @@ namespace Gsplat
 
         public void Reset()
         {
+            m_relightingMaterials = null;
             m_material = null;
             m_depthMaterial = null;
         }
@@ -33,6 +53,7 @@ namespace Gsplat
                     for (var j = 0; j < GsplatSettings.Instance.MaxRenderOrder; ++j)
                     {
                         m_material[i][j] = new Material(DefaultMaterial);
+                        m_material[i][j].DisableKeyword(GsplatUtils.k_RelightingKeyword);
                         m_material[i][j].DisableKeyword($"SH_BANDS_0");
                         m_material[i][j].DisableKeyword($"SH_BANDS_1");
                         m_material[i][j].DisableKeyword($"SH_BANDS_2");
