@@ -1,4 +1,4 @@
-﻿// Copyright (c) 2025 Yize Wu
+// Copyright (c) 2025 Yize Wu
 // SPDX-License-Identifier: MIT
 
 #if GSPLAT_ENABLE_HDRP
@@ -15,8 +15,7 @@ namespace Gsplat
                 !GsplatSorter.Instance.GatherGsplatsForCamera(ctx.hdCamera.camera))
                 return;
 
-            if (GsplatSorter.Instance.GpuSortEnabled)
-                GsplatSorter.Instance.DispatchSort(ctx.cmd, ctx.hdCamera.camera);
+            GsplatSorter.Instance.DispatchSort(ctx.cmd, ctx.hdCamera.camera);
 
             CoreUtils.SetRenderTarget(ctx.cmd, ctx.cameraColorBuffer, ctx.cameraDepthBuffer);
             GsplatSorter.Instance.RenderColor(ctx.cmd, ctx.hdCamera.camera);

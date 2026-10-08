@@ -51,6 +51,15 @@ Shader "Gsplat/Standard"
             float _Brightness;
             float _ScaleFactor;
             int _Antialiased;
+            sampler2D _GsplatRelightMap;
+            float4 _GsplatRelightScreen;
+            sampler2D _GsplatCameraRelightMap;
+            float _GsplatCameraRelightOverride;
+            float4 _GsplatCameraRelightScreen;
+            float4x4 _GsplatCameraRelightView;
+            float4 _GsplatCameraRelightPosition;
+            float4 _GsplatCameraRelightProjection;
+            float4 _GsplatRelightParams;
             #ifdef GSPLAT_VERTEX_TEXTURES
             Texture2D<float4> _OrderTexture;
 
@@ -102,6 +111,32 @@ Shader "Gsplat/Standard"
                 UNITY_VERTEX_OUTPUT_STEREO
             };
 
+            bool GsplatCameraOverrideMatchesCurrentCamera()
+            {
+                float3 positionDelta =
+                    _GsplatCameraRelightPosition.xyz - _WorldSpaceCameraPos.xyz;
+                float positionError = dot(positionDelta, positionDelta);
+
+                const float3 weights = float3(1.0, 1.0, 1.0);
+                float rotationError =
+                    dot(abs(_GsplatCameraRelightView[0].xyz - UNITY_MATRIX_V[0].xyz), weights) +
+                    dot(abs(_GsplatCameraRelightView[1].xyz - UNITY_MATRIX_V[1].xyz), weights) +
+                    dot(abs(_GsplatCameraRelightView[2].xyz - UNITY_MATRIX_V[2].xyz), weights);
+
+                float2 currentProjection = float2(
+                    abs(UNITY_MATRIX_P[0][0]),
+                    abs(UNITY_MATRIX_P[1][1]));
+                float2 projectionError =
+                    abs(_GsplatCameraRelightProjection.xy - currentProjection);
+
+                // A stale Scene-view global must never replace the Game-camera map carried by
+                // this draw. The tolerances allow normal float roundoff but reject even a small
+                // difference in camera pose, FOV, orthographic scale, or aspect.
+                return positionError < 1e-4 &&
+                       rotationError < 1e-3 &&
+                       max(projectionError.x, projectionError.y) < 1e-3;
+            }
+
             v2f vert(appdata v)
             {
                 v2f o;
@@ -152,9 +187,34 @@ Shader "Gsplat/Standard"
                 float alpha = (exp(-A * 4.0) + falloff) * i.color.a;
 
                 if (alpha < 1.0 / 255.0) discard;
-                if (_GammaToLinear)
-                    return float4(GammaToLinearSpace(i.color.rgb) * alpha * _Brightness, alpha);
-                return float4(i.color.rgb * alpha * _Brightness, alpha);
+                float3 color = _GammaToLinear ? GammaToLinearSpace(i.color.rgb) : i.color.rgb;
+                if (_GsplatRelightParams.w > 0.5)
+                {
+                    // The normal Game-camera map and dimensions travel with the queued draw.
+                    // This is deliberate: camera globals can be reset by a hidden proxy or
+                    // another SRP camera after RenderMeshPrimitives has queued the splats.
+                    // Scene view rendering opts into its camera-specific global capture.
+                    bool useCameraOverride =
+                        _GsplatCameraRelightOverride > 0.5 &&
+                        GsplatCameraOverrideMatchesCurrentCamera();
+                    float2 inverseScreen = useCameraOverride
+                        ? _GsplatCameraRelightScreen.zw
+                        : _GsplatRelightScreen.zw;
+                    if (inverseScreen.x <= 0.0 || inverseScreen.y <= 0.0)
+                        inverseScreen = 1.0 / _ScreenParams.xy;
+                    float2 screenUV = saturate(i.vertex.xy * inverseScreen);
+                    float4 lit;
+                    if (useCameraOverride)
+                        lit = tex2D(_GsplatCameraRelightMap, screenUV);
+                    else
+                        lit = tex2D(_GsplatRelightMap, screenUV);
+                    float3 factor = lerp(
+                        _GsplatRelightParams.zzz,
+                        lit.rgb * _GsplatRelightParams.y,
+                        lit.a);
+                    color = lerp(color, color * factor, _GsplatRelightParams.x);
+                }
+                return float4(color * alpha * _Brightness, alpha);
             }
             ENDHLSL
 

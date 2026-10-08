@@ -32,6 +32,14 @@ Shader "Gsplat/Global"
             #include "UnityCG.cginc"
 
             int _SplatInstanceSize;
+            sampler2D _GsplatRelightMap;
+            float4 _GsplatRelightScreen;
+            sampler2D _GsplatCameraRelightMap;
+            float _GsplatCameraRelightOverride;
+            float4 _GsplatCameraRelightScreen;
+            float4x4 _GsplatCameraRelightView;
+            float4 _GsplatCameraRelightPosition;
+            float4 _GsplatCameraRelightProjection;
 
             #include "GsplatSparkGlobal.hlsl"
 
@@ -52,6 +60,29 @@ Shader "Gsplat/Global"
                 float4 color : COLOR;
                 UNITY_VERTEX_OUTPUT_STEREO
             };
+
+            bool GsplatCameraOverrideMatchesCurrentCamera()
+            {
+                float3 positionDelta =
+                    _GsplatCameraRelightPosition.xyz - _WorldSpaceCameraPos.xyz;
+                float positionError = dot(positionDelta, positionDelta);
+
+                const float3 weights = float3(1.0, 1.0, 1.0);
+                float rotationError =
+                    dot(abs(_GsplatCameraRelightView[0].xyz - UNITY_MATRIX_V[0].xyz), weights) +
+                    dot(abs(_GsplatCameraRelightView[1].xyz - UNITY_MATRIX_V[1].xyz), weights) +
+                    dot(abs(_GsplatCameraRelightView[2].xyz - UNITY_MATRIX_V[2].xyz), weights);
+
+                float2 currentProjection = float2(
+                    abs(UNITY_MATRIX_P[0][0]),
+                    abs(UNITY_MATRIX_P[1][1]));
+                float2 projectionError =
+                    abs(_GsplatCameraRelightProjection.xy - currentProjection);
+
+                return positionError < 1e-4 &&
+                       rotationError < 1e-3 &&
+                       max(projectionError.x, projectionError.y) < 1e-3;
+            }
 
             v2f vert(appdata v)
             {
@@ -111,9 +142,30 @@ Shader "Gsplat/Global"
                 float alpha = (exp(-A * 4.0) + falloff) * i.color.a;
 
                 if (alpha < 1.0 / 255.0) discard;
-                if (p.gammaToLinear)
-                    return float4(GammaToLinearSpace(i.color.rgb) * alpha * p.brightness, alpha);
-                return float4(i.color.rgb * alpha * p.brightness, alpha);
+                float3 color = p.gammaToLinear ? GammaToLinearSpace(i.color.rgb) : i.color.rgb;
+                if (p.relightEnabled != 0u)
+                {
+                    bool useCameraOverride =
+                        _GsplatCameraRelightOverride > 0.5 &&
+                        GsplatCameraOverrideMatchesCurrentCamera();
+                    float2 inverseScreen = useCameraOverride
+                        ? _GsplatCameraRelightScreen.zw
+                        : _GsplatRelightScreen.zw;
+                    if (inverseScreen.x <= 0.0 || inverseScreen.y <= 0.0)
+                        inverseScreen = 1.0 / _ScreenParams.xy;
+                    float2 screenUV = saturate(i.vertex.xy * inverseScreen);
+                    float4 lit;
+                    if (useCameraOverride)
+                        lit = tex2D(_GsplatCameraRelightMap, screenUV);
+                    else
+                        lit = tex2D(_GsplatRelightMap, screenUV);
+                    float3 factor = lerp(
+                        p.relightBackground.xxx,
+                        lit.rgb * p.relightBrightness,
+                        lit.a);
+                    color = lerp(color, color * factor, p.relightBlend);
+                }
+                return float4(color * alpha * p.brightness, alpha);
             }
             ENDHLSL
         }

@@ -32,6 +32,8 @@ namespace Gsplat
                 using var builder = renderGraph.AddUnsafePass(GsplatSorter.k_passName, out PassData passData);
                 passData.CameraData = frameData.Get<UniversalCameraData>();
                 builder.AllowPassCulling(false);
+                // Relighting binds camera-specific shader globals even on the CPU-sort fallback.
+                builder.AllowGlobalStateModification(true);
                 builder.SetRenderFunc(static (PassData data, UnsafeGraphContext context) =>
                 {
                     var commandBuffer = CommandBufferHelpers.GetNativeCommandBuffer(context.cmd);
@@ -160,8 +162,7 @@ namespace Gsplat
             if (!GsplatSettings.Instance.Valid || !m_hasGsplats)
                 return;
 
-            if (GsplatSorter.Instance.GpuSortEnabled)
-                renderer.EnqueuePass(m_sortPass);
+            renderer.EnqueuePass(m_sortPass);
             renderer.EnqueuePass(m_colorPass);
             renderer.EnqueuePass(m_depthPass);
         }

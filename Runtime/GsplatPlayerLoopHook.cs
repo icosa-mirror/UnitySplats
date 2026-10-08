@@ -1,4 +1,4 @@
-﻿// Copyright (c) 2026 Yize Wu
+// Copyright (c) 2026 Yize Wu
 // SPDX-License-Identifier: MIT
 
 using System.Collections.Generic;
@@ -85,6 +85,11 @@ namespace Gsplat
 
         static void Update()
         {
+            // Camera controllers commonly finalize their transform in LateUpdate. Synchronize
+            // the proxy now, then let Unity render its target-texture camera through the normal
+            // camera loop before the Game camera. Manual SRP render requests can produce a
+            // different result from the normal Play-mode camera path.
+            GsplatRelighting.SynchronizeGameCameras();
             GsplatSorter.Instance.Update();
         }
     }

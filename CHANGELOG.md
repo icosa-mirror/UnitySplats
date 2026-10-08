@@ -19,6 +19,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Preserved explicitly serialized depth cutoffs when migrating settings assets from compatible package forks.
 - Made spatial-query shader migration independent of other settings-schema feature merges.
 
+## [1.2.0] - 2026-08-18
+
+### Fixed
+
+- Fixed incorrect splat compositing on Direct3D 11 when a large camera-depth range caused nearby splats to collide in the former 16-bit CPU sort. The fallback now preserves full 32-bit float depth order.
+- Fixed Direct3D 11 Scene views consuming an order sorted from the Main camera. The CPU fallback now follows the active Scene/Game viewport and discards in-flight results when the selected viewport changes.
+- Matched the GPU sort's stable handling of equal view depths in the CPU fallback, preventing localized ordering artifacts at camera angles where SPARK half-float centers produce tied depth keys.
+
 ## [1.1.0] - 2026-07-22
 
 ### Added
@@ -81,7 +89,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Fixed URP compilation on Unity 6000.4 and newer, where the legacy `ScriptableRenderPass.Execute` override was removed in favor of RenderGraph.
 - Fixed Project-to-Hierarchy drag-and-drop on Unity 6000.4 and newer by using the 64-bit `EntityId` handler instead of the obsolete 32-bit `InstanceID` delegate.
 
-[unreleased]: https://github.com/arloopa/UnitySplats/compare/v1.1.0...HEAD
+[unreleased]: https://github.com/arloopa/UnitySplats/compare/v1.2.0...HEAD
+[1.2.0]: https://github.com/arloopa/UnitySplats/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/arloopa/UnitySplats/compare/v1.0.1...v1.1.0
 [1.0.1]: https://github.com/arloopa/UnitySplats/compare/v1.0.0...v1.0.1
 [1.0.0]: https://github.com/arloopa/UnitySplats/releases/tag/v1.0.0

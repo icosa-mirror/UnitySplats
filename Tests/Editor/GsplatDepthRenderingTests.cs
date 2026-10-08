@@ -112,5 +112,39 @@ namespace Gsplat.Tests
                 Object.DestroyImmediate(gameObject);
             }
         }
+
+        [Test]
+        public void ExplicitColorPropertiesClearRelightingForNonRelitDraws()
+        {
+            var asset = ScriptableObject.CreateInstance<GsplatAssetSpark>();
+            var gameObject = new GameObject("Non-relit explicit color properties");
+            const BindingFlags flags = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic;
+#pragma warning disable SYSLIB0050
+            var implementation = (GsplatRendererImpl)System.Runtime.Serialization.FormatterServices
+                .GetUninitializedObject(typeof(GsplatRendererImpl));
+#pragma warning restore SYSLIB0050
+            var properties = new MaterialPropertyBlock();
+            properties.SetTexture("_GsplatRelightMap", Texture2D.whiteTexture);
+            properties.SetVector("_GsplatRelightParams", Vector4.one);
+            properties.SetVector("_GsplatRelightScreen", Vector4.one);
+            typeof(GsplatRendererImpl).GetField("m_propertyBlock", flags).SetValue(implementation, properties);
+            typeof(GsplatRendererImpl).GetField("m_gsplatAsset", flags).SetValue(implementation, asset);
+            try
+            {
+                // Both explicit color APIs use this shared setup. A previous relit draw must
+                // not leave lighting enabled when the next draw has no relighting source.
+                typeof(GsplatRendererImpl).GetMethod("ConfigureColorProperties", flags).Invoke(
+                    implementation, new object[] { gameObject.transform, false, 0, 1f, 1f, null, 1f, 2f, 1f });
+                Assert.AreEqual(Vector4.zero, properties.GetVector("_GsplatRelightParams"));
+                Assert.AreEqual(Vector4.zero, properties.GetVector("_GsplatRelightScreen"));
+                Assert.AreSame(Texture2D.blackTexture, properties.GetTexture("_GsplatRelightMap"));
+            }
+            finally
+            {
+                UnityEngine.Object.DestroyImmediate(gameObject);
+                UnityEngine.Object.DestroyImmediate(asset);
+            }
+        }
+
     }
 }

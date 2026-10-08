@@ -415,6 +415,7 @@ namespace Gsplat
         readonly HashSet<UnityEngine.Object> m_warnedGlobalIndexLimit = new();
         readonly HashSet<UnityEngine.Object> m_warnedGlobalLayer = new();
         readonly HashSet<UnityEngine.Object> m_warnedGlobalRenderOrder = new();
+        readonly HashSet<UnityEngine.Object> m_warnedGlobalRelightingSource = new();
         bool m_warnedGlobalCapacity;
         readonly Dictionary<GsplatAsset, CpuCenterCache> m_cpuCenterCaches = new();
         GsplatSortPass m_sortPass;
@@ -494,6 +495,7 @@ namespace Gsplat
                 m_warnedGlobalIndexLimit.Remove(obj);
                 m_warnedGlobalLayer.Remove(obj);
                 m_warnedGlobalRenderOrder.Remove(obj);
+                m_warnedGlobalRelightingSource.Remove(obj);
             }
 
             m_globalRenderer.MarkGlobalBuffersDirty();
@@ -524,7 +526,7 @@ namespace Gsplat
 
         public bool GatherGsplatsForCamera(Camera cam)
         {
-            if (cam.cameraType == CameraType.Preview)
+            if (cam.cameraType == CameraType.Preview || GsplatRelighting.IsProxyCamera(cam))
                 return false;
 
             if (CpuFallbackEnabled)
@@ -550,6 +552,7 @@ namespace Gsplat
             }
 
             var commonLayer = (m_globalGsplats[0] as Component)?.gameObject.layer ?? 0;
+            GsplatRelighting commonRelightingSource = null;
             ulong totalSplatCount = 0;
 
             // Global merge requires every participating renderer to use SPARK compression.
@@ -591,6 +594,22 @@ namespace Gsplat
                         Debug.LogWarning(
                             $"[GsplatSorter] '{renderer.name}' uses custom Render Order {renderer.RenderOrder}. A single merged draw cannot preserve per-renderer transparent queues, so global sort is disabled for this scene.");
                     return false;
+                }
+
+                if (gs is GsplatRenderer relightedRenderer &&
+                    relightedRenderer.TryGetActiveRelighting(out var relightingSource))
+                {
+                    if (!commonRelightingSource)
+                    {
+                        commonRelightingSource = relightingSource;
+                    }
+                    else if (commonRelightingSource != relightingSource)
+                    {
+                        if (m_warnedGlobalRelightingSource.Add(obj))
+                            Debug.LogWarning(
+                                $"[GsplatSorter] '{relightedRenderer.name}' uses a different relighting camera from another active splat. A merged draw can sample only one screen-space relighting texture, so global sorting is disabled for this scene.");
+                        return false;
+                    }
                 }
 
                 // GlobalOrderBuffer packs the local splat ID into 24 bits.
@@ -646,16 +665,21 @@ namespace Gsplat
                 return;
 
             InitialClearCmdBuffer(camera);
-            if (GpuSortEnabled)
-                DispatchSort(m_commandBuffer, camera);
+            DispatchSort(m_commandBuffer, camera);
             RenderColor(m_commandBuffer, camera);
             RenderDepth(m_commandBuffer, camera);
         }
 
         public void DispatchSort(CommandBuffer cmd, Camera camera)
         {
+            // Bind camera-local relighting inside the render command stream. Shader.SetGlobal*
+            // callbacks can be overwritten when Game and Scene cameras are recorded together.
+            GsplatRelighting.BindForCamera(cmd, camera);
+
             if (!GpuSortEnabled)
             {
+                // Gather records the camera for the next player-loop CPU update. This callback
+                // only records the texture binding and never uploads the CPU order buffer.
                 if (CpuFallbackEnabled)
                     RememberCpuSortCamera(camera);
                 return;
@@ -973,6 +997,7 @@ namespace Gsplat
         static bool IsUsableCpuSortCamera(Camera camera) =>
             camera &&
             camera.cameraType != CameraType.Preview &&
+            !GsplatRelighting.IsProxyCamera(camera) &&
             (camera.isActiveAndEnabled || camera.cameraType == CameraType.SceneView);
 
 #if UNITY_EDITOR

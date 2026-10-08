@@ -55,6 +55,9 @@ namespace Gsplat
         static readonly int k_sphereRadius = Shader.PropertyToID("_SphereRadius");
         static readonly int k_maxObjectScale = Shader.PropertyToID("_MaxObjectScale");
         static readonly int k_hitBuffer = Shader.PropertyToID("_HitBuffer");
+        static readonly int k_relightMap = Shader.PropertyToID("_GsplatRelightMap");
+        static readonly int k_relightScreen = Shader.PropertyToID("_GsplatRelightScreen");
+        static readonly int k_relightParams = Shader.PropertyToID("_GsplatRelightParams");
 
         uint m_framesBeforeRecomputeSort = 0;
         uint m_sortsBeforeRecomputeCutouts = 0;
@@ -576,12 +579,15 @@ namespace Gsplat
         /// <param name="scaleFactor">Splats uv scaling factor, reduce splat size while trying to keep visual fidelity.</param>
         /// <param name="renderOrder">Manual render order placement of the gsplat. The final value is capped by the maximum render order setting.</param>
         public void Render(Transform transform, int layer, bool gammaToLinear = false, int shDegree = 3,
-            float brightness = 1.0f, float scaleFactor = 1.0f, uint renderOrder = 0)
+            float brightness = 1.0f, float scaleFactor = 1.0f, uint renderOrder = 0,
+            GsplatRelighting relighting = null, float relightingBlend = 1f,
+            float relightingBrightness = 2f, float relightingBackground = 1f)
         {
             if (m_remainingCount <= 0)
                 return;
 
-            ConfigureColorProperties(transform, gammaToLinear, shDegree, brightness, scaleFactor);
+            ConfigureColorProperties(transform, gammaToLinear, shDegree, brightness, scaleFactor,
+                relighting, relightingBlend, relightingBrightness, relightingBackground);
 
             uint order = Math.Clamp(renderOrder, 0, GsplatSettings.Instance.MaxRenderOrder - 1);
             var rp = new RenderParams(m_gsplatAsset.Materials[order])
@@ -596,12 +602,15 @@ namespace Gsplat
         }
 
         public void RenderColor(CommandBuffer cmd, Transform transform, bool gammaToLinear = false,
-            int shDegree = 3, float brightness = 1.0f, float scaleFactor = 1.0f, uint renderOrder = 0)
+            int shDegree = 3, float brightness = 1.0f, float scaleFactor = 1.0f, uint renderOrder = 0,
+            GsplatRelighting relighting = null, float relightingBlend = 1f,
+            float relightingBrightness = 2f, float relightingBackground = 1f)
         {
             if (m_remainingCount <= 0)
                 return;
 
-            ConfigureColorProperties(transform, gammaToLinear, shDegree, brightness, scaleFactor);
+            ConfigureColorProperties(transform, gammaToLinear, shDegree, brightness, scaleFactor,
+                relighting, relightingBlend, relightingBrightness, relightingBackground);
             uint order = Math.Clamp(renderOrder, 0, GsplatSettings.Instance.MaxRenderOrder - 1);
             int instances = Mathf.CeilToInt(m_remainingCount / (float)GsplatSettings.Instance.SplatInstanceSize);
             cmd.DrawMeshInstancedProcedural(GsplatSettings.Instance.Mesh, 0, m_gsplatAsset.Materials[order], 0,
@@ -626,12 +635,15 @@ namespace Gsplat
 
 #if UNITY_6000_0_OR_NEWER
         public void RenderColor(RasterCommandBuffer cmd, Transform transform, bool gammaToLinear = false,
-            int shDegree = 3, float brightness = 1.0f, float scaleFactor = 1.0f, uint renderOrder = 0)
+            int shDegree = 3, float brightness = 1.0f, float scaleFactor = 1.0f, uint renderOrder = 0,
+            GsplatRelighting relighting = null, float relightingBlend = 1f,
+            float relightingBrightness = 2f, float relightingBackground = 1f)
         {
             if (m_remainingCount <= 0)
                 return;
 
-            ConfigureColorProperties(transform, gammaToLinear, shDegree, brightness, scaleFactor);
+            ConfigureColorProperties(transform, gammaToLinear, shDegree, brightness, scaleFactor,
+                relighting, relightingBlend, relightingBrightness, relightingBackground);
             uint order = Math.Clamp(renderOrder, 0, GsplatSettings.Instance.MaxRenderOrder - 1);
             int instances = Mathf.CeilToInt(m_remainingCount / (float)GsplatSettings.Instance.SplatInstanceSize);
             cmd.DrawMeshInstancedProcedural(GsplatSettings.Instance.Mesh, 0, m_gsplatAsset.Materials[order], 0,
@@ -656,12 +668,32 @@ namespace Gsplat
 #endif
 
         void ConfigureColorProperties(Transform transform, bool gammaToLinear, int shDegree, float brightness,
-            float scaleFactor)
+            float scaleFactor, GsplatRelighting relighting, float relightingBlend,
+            float relightingBrightness, float relightingBackground)
         {
             ConfigureCommonProperties(transform, scaleFactor);
             m_propertyBlock.SetInteger(k_gammaToLinear, gammaToLinear ? 1 : 0);
             m_propertyBlock.SetInteger(k_shDegree, Math.Min(m_gsplatAsset.SHBands, shDegree));
             m_propertyBlock.SetFloat(k_brightness, brightness);
+            if (relighting && relighting.IsReady)
+            {
+                m_propertyBlock.SetTexture(k_relightMap, relighting.RelightingTexture);
+                m_propertyBlock.SetVector(k_relightScreen, relighting.SourceScreen);
+                m_propertyBlock.SetVector(k_relightParams, new Vector4(
+                    relightingBlend,
+                    relightingBrightness,
+                    relightingBackground,
+                    1f));
+            }
+            else
+            {
+                // Always bind a valid texture because some mobile drivers validate sampler
+                // bindings even when the dynamic relighting branch is disabled.
+                m_propertyBlock.SetTexture(k_relightMap, Texture2D.blackTexture);
+                m_propertyBlock.SetVector(k_relightScreen, Vector4.zero);
+                m_propertyBlock.SetVector(k_relightParams, Vector4.zero);
+            }
+
         }
 
         void ConfigureDepthProperties(Transform transform, float scaleFactor)

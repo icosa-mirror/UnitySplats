@@ -1,6 +1,6 @@
 # UnitySplats
 
-[![Version](https://img.shields.io/badge/version-v1.1.0-blue.svg)](./CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-v1.2.0-blue.svg)](./CHANGELOG.md)
 [![Unity](https://img.shields.io/badge/Unity-6000.0%2B-black.svg)](https://unity.com/)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](./LICENSE.md)
 
