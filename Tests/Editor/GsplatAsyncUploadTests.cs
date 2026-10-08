@@ -294,6 +294,73 @@ namespace Gsplat.Tests
         }
 
         [Test]
+        public void CpuFallbackSortPreservesNearbyDepthOrderAcrossLargeRanges()
+        {
+            var sorterType = typeof(GsplatSorter);
+            var requestType = sorterType.GetNestedType("CpuSortRequest", BindingFlags.NonPublic);
+            var workspaceType = sorterType.GetNestedType("CpuSortWorkspace", BindingFlags.NonPublic);
+            var requestConstructor = requestType.GetConstructor(
+                BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic, null,
+                new[] { typeof(Vector3[]), typeof(uint[]), typeof(int), typeof(int), typeof(Matrix4x4) }, null);
+            var workspace = Activator.CreateInstance(workspaceType, true);
+            workspaceType.GetMethod("EnsureCapacity").Invoke(workspace, new object[] { 4 });
+
+            // The old 16-bit normalized sorter collapsed -11 and -10 into one bucket because
+            // of the distant outlier, then incorrectly preserved their near-before-far PLY order.
+            var centers = new[]
+            {
+                new Vector3(0, 0, -10),
+                new Vector3(0, 0, -11),
+                new Vector3(0, 0, -1_000_000_000),
+                new Vector3(0, 0, -1)
+            };
+            var request = requestConstructor.Invoke(new object[]
+            {
+                centers, null, centers.Length, 8, Matrix4x4.identity
+            });
+
+            sorterType.GetMethod("SortCpu", BindingFlags.Static | BindingFlags.NonPublic).Invoke(null,
+                new[] { request, workspace, CancellationToken.None });
+            var order = (uint[])workspaceType.GetField("Order").GetValue(workspace);
+            CollectionAssert.AreEqual(new uint[] { 2, 1, 0, 3 },
+                new[] { order[0], order[1], order[2], order[3] });
+        }
+
+        [Test]
+        public void CpuFallbackSortIsStableForEqualViewDepths()
+        {
+            var sorterType = typeof(GsplatSorter);
+            var requestType = sorterType.GetNestedType("CpuSortRequest", BindingFlags.NonPublic);
+            var workspaceType = sorterType.GetNestedType("CpuSortWorkspace", BindingFlags.NonPublic);
+            var requestConstructor = requestType.GetConstructor(
+                BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic, null,
+                new[] { typeof(Vector3[]), typeof(uint[]), typeof(int), typeof(int), typeof(Matrix4x4) }, null);
+            var workspace = Activator.CreateInstance(workspaceType, true);
+            workspaceType.GetMethod("EnsureCapacity").Invoke(workspace, new object[] { 5 });
+
+            // Interleave three equal-depth splats with keys on either side. An unstable in-place
+            // partition changes the equal group from 0,2,4 to 0,4,2 at this camera angle.
+            var centers = new[]
+            {
+                new Vector3(0, 0, -10),
+                new Vector3(0, 0, 100),
+                new Vector3(0, 0, -10),
+                new Vector3(0, 0, -100),
+                new Vector3(0, 0, -10)
+            };
+            var request = requestConstructor.Invoke(new object[]
+            {
+                centers, null, centers.Length, 9, Matrix4x4.identity
+            });
+
+            sorterType.GetMethod("SortCpu", BindingFlags.Static | BindingFlags.NonPublic).Invoke(null,
+                new[] { request, workspace, CancellationToken.None });
+            var order = (uint[])workspaceType.GetField("Order").GetValue(workspace);
+            CollectionAssert.AreEqual(new uint[] { 3, 0, 2, 4, 1 },
+                new[] { order[0], order[1], order[2], order[3], order[4] });
+        }
+
+        [Test]
         public void BuiltInNoDrawablePathClearsCommandsFromPreviousFrame()
         {
             GsplatSorter sorter = GsplatSorter.Instance;
