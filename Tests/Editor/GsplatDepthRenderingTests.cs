@@ -15,6 +15,43 @@ namespace Gsplat.Tests
 {
     public class GsplatDepthRenderingTests
     {
+        [TestCase(false, false)]
+        [TestCase(true, false)]
+        [TestCase(true, true)]
+        public void UrpFeatureDisposalToleratesMissingPassesAndRepeatedCalls(
+            bool initializePasses, bool allocateCommandBuffer)
+        {
+            var type = typeof(GsplatSorter).Assembly.GetType("Gsplat.GsplatURPFeature");
+            if (type == null) { Assert.Ignore("URP feature is not enabled in this project."); }
+            var feature = ScriptableObject.CreateInstance(type);
+            const BindingFlags flags = BindingFlags.Instance | BindingFlags.NonPublic;
+            var sortPassField = type.GetField("m_sortPass", flags);
+            var dispose = type.GetMethod("Dispose", BindingFlags.Instance | BindingFlags.Public);
+            try
+            {
+                if (initializePasses)
+                {
+                    type.GetMethod("Create").Invoke(feature, null);
+                    if (allocateCommandBuffer)
+                    {
+                        var pass = sortPassField.GetValue(feature);
+                        pass.GetType().GetField("CommandBuffer").SetValue(pass, new CommandBuffer());
+                    }
+                }
+                else
+                {
+                    sortPassField.SetValue(feature, null);
+                }
+                Assert.DoesNotThrow(() => dispose.Invoke(feature, null));
+                Assert.IsNull(sortPassField.GetValue(feature));
+                Assert.DoesNotThrow(() => dispose.Invoke(feature, null));
+            }
+            finally
+            {
+                Object.DestroyImmediate(feature);
+            }
+        }
+
         sealed class RecordingGsplat : MonoBehaviour, IGsplat
         {
             public static readonly List<string> Calls = new();

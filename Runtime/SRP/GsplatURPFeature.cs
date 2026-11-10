@@ -168,9 +168,12 @@ namespace Gsplat
 
         protected override void Dispose(bool disposing)
         {
-            m_sortPass.CommandBuffer?.Dispose();
-            m_sortPass.CommandBuffer = null;
-            m_sortPass = null;
+            if (m_sortPass != null)
+            {
+                m_sortPass.CommandBuffer?.Dispose();
+                m_sortPass.CommandBuffer = null;
+                m_sortPass = null;
+            }
             m_colorPass = null;
             m_depthPass = null;
         }
